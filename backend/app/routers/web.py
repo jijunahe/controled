@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from fastapi import APIRouter, Depends, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -45,6 +46,17 @@ WLED_EFFECTS = [
 ]
 
 
+def _hex_to_rgb(color_hex: str) -> tuple[int, int, int]:
+    color_hex = color_hex.lstrip("#")
+    if len(color_hex) != 6:
+        color_hex = "FF0000"
+    return (
+        int(color_hex[0:2], 16),
+        int(color_hex[2:4], 16),
+        int(color_hex[4:6], 16),
+    )
+
+
 def _build_payload(
     *,
     on: bool,
@@ -54,12 +66,7 @@ def _build_payload(
     ix: int,
     color_hex: str,
 ) -> dict:
-    color_hex = color_hex.lstrip("#")
-    if len(color_hex) != 6:
-        color_hex = "FF0000"
-    r = int(color_hex[0:2], 16)
-    g = int(color_hex[2:4], 16)
-    b = int(color_hex[4:6], 16)
+    r, g, b = _hex_to_rgb(color_hex)
     return {
         "on": on,
         "bri": bri,
@@ -73,6 +80,46 @@ def _build_payload(
             }
         ],
     }
+
+
+def _build_sequence_payload(
+    *,
+    steps_raw: list[dict],
+    loop: bool,
+    on: bool,
+    default_bri: int,
+    default_fx: int,
+    default_sx: int,
+    default_ix: int,
+) -> dict:
+    steps: list[dict] = []
+    for step in steps_raw:
+        color = str(step.get("color", "#ff0000"))
+        try:
+            duration_sec = float(step.get("duration_sec", 3))
+        except (TypeError, ValueError):
+            duration_sec = 3.0
+        duration_ms = max(100, int(duration_sec * 1000))
+        try:
+            bri = int(step.get("bri", default_bri))
+        except (TypeError, ValueError):
+            bri = default_bri
+        try:
+            fx = int(step.get("fx", default_fx))
+        except (TypeError, ValueError):
+            fx = default_fx
+        state = _build_payload(
+            on=on,
+            bri=max(1, min(255, bri)),
+            fx=fx,
+            sx=default_sx,
+            ix=default_ix,
+            color_hex=color,
+        )
+        steps.append({"duration_ms": duration_ms, "state": state})
+    if not steps:
+        raise ValueError("La secuencia requiere al menos un paso")
+    return {"loop": loop, "steps": steps}
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -173,6 +220,8 @@ def create_from_form(
     color: str = Form("#ff0000"),
     on: str | None = Form(None),
     activate: str | None = Form(None),
+    loop: str | None = Form(None),
+    sequence_json: str = Form(""),
     db: Session = Depends(get_db),
     user: User | None = Depends(get_optional_user),
 ):
@@ -186,14 +235,40 @@ def create_from_form(
         )
 
     resolved_device_id = int(device_id) if device_id.strip().isdigit() else None
-    payload = _build_payload(
-        on=on is not None,
-        bri=max(1, min(255, bri)),
-        fx=fx,
-        sx=max(0, min(255, sx)),
-        ix=max(0, min(255, ix)),
-        color_hex=color,
-    )
+    is_on = on is not None
+    bri_clamped = max(1, min(255, bri))
+    sx_clamped = max(0, min(255, sx))
+    ix_clamped = max(0, min(255, ix))
+
+    try:
+        if config_type in {"sequence", "playlist"}:
+            steps_raw = json.loads(sequence_json) if sequence_json.strip() else []
+            if not isinstance(steps_raw, list):
+                raise ValueError("sequence_json inválido")
+            payload = _build_sequence_payload(
+                steps_raw=steps_raw,
+                loop=loop is not None,
+                on=is_on,
+                default_bri=bri_clamped,
+                default_fx=fx,
+                default_sx=sx_clamped,
+                default_ix=ix_clamped,
+            )
+        else:
+            payload = _build_payload(
+                on=is_on,
+                bri=bri_clamped,
+                fx=fx,
+                sx=sx_clamped,
+                ix=ix_clamped,
+                color_hex=color,
+            )
+    except (ValueError, json.JSONDecodeError) as exc:
+        return RedirectResponse(
+            url=f"/dashboard?err={str(exc).replace(' ', '+')[:120]}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
     cfg_service.create_configuration(
         db,
         name=name.strip(),
