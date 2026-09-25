@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Panel — Control LEDs{% endblock %}
+{% block body %}
+<header class="relative z-10 border-b border-line bg-panel/80 backdrop-blur">
+  <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
+    <div>
+      <p class="font-mono text-[11px] uppercase tracking-[0.18em] text-glow">Raspberry · WLED</p>
+      <h1 class="text-xl font-semibold text-white sm:text-2xl">Control LEDs</h1>
+    </div>
+    <div class="flex items-center gap-3 text-sm">
+      <span class="hidden text-mist sm:inline">{{ user.username }} · {{ user.role }}</span>
+      <form method="post" action="/logout">
+        <button class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-ember hover:text-ember" type="submit">
+          Salir
+        </button>
+      </form>
+    </div>
+  </div>
+</header>
+
+<main class="relative z-10 mx-auto max-w-6xl space-y-8 px-4 py-8">
+  {% if message %}
+  <div class="rounded-lg border border-glow/30 bg-glow/10 px-4 py-2 text-sm text-glow">{{ message }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">{{ error }}</div>
+  {% endif %}
+
+  <section class="grid gap-4 sm:grid-cols-3">
+    <article class="rounded-xl border border-line bg-panel p-4">
+      <p class="text-xs uppercase tracking-wide text-mist">Pendiente (status=1)</p>
+      <p class="mt-2 text-2xl font-semibold {% if active %}text-ember{% else %}text-mist{% endif %}">
+        {% if active %}#{{ active.id }} · {{ active.name }}{% else %}Ninguna{% endif %}
+      </p>
+    </article>
+    <article class="rounded-xl border border-line bg-panel p-4">
+      <p class="text-xs uppercase tracking-wide text-mist">Configuraciones</p>
+      <p class="mt-2 text-2xl font-semibold">{{ configs|length }}</p>
+    </article>
+    <article class="rounded-xl border border-line bg-panel p-4">
+      <p class="text-xs uppercase tracking-wide text-mist">Dispositivos</p>
+      <p class="mt-2 text-2xl font-semibold">{{ devices|length }}</p>
+      {% for d in devices %}
+      <p class="mt-1 font-mono text-xs text-mist">{{ d.name }} · {{ d.ip_address }}</p>
+      {% endfor %}
+    </article>
+  </section>
+
+  <section class="rounded-xl border border-line bg-panel p-5 sm:p-6">
+    <h2 class="text-lg font-semibold text-white">Nueva configuración</h2>
+    <p class="mt-1 text-sm text-mist">Define color, brillo, efecto y velocidad. Al activar, el orquestador la aplicará al Gledopto.</p>
+
+    <form method="post" action="/dashboard/configurations" class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <label class="block sm:col-span-2 lg:col-span-1">
+        <span class="mb-1 block text-sm text-mist">Nombre</span>
+        <input name="name" required maxlength="120" class="field" placeholder="Atardecer cálido" />
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Tipo</span>
+        <select name="config_type" class="field">
+          <option value="static">static</option>
+          <option value="sequence">sequence</option>
+          <option value="playlist">playlist</option>
+          <option value="audio_reactive">audio_reactive</option>
+        </select>
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Dispositivo</span>
+        <select name="device_id" class="field">
+          <option value="">Default</option>
+          {% for d in devices %}
+          <option value="{{ d.id }}">{{ d.name }} ({{ d.ip_address }})</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Color</span>
+        <input type="color" name="color" value="#ff6b00" class="h-11 w-full cursor-pointer rounded-lg border border-line bg-ink p-1" />
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Brillo (1–255)</span>
+        <input type="number" name="bri" min="1" max="255" value="160" class="field" />
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Efecto WLED</span>
+        <select name="fx" class="field">
+          {% for id, label in effects %}
+          <option value="{{ id }}">{{ id }} — {{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Velocidad sx (0–255)</span>
+        <input type="number" name="sx" min="0" max="255" value="128" class="field" />
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Intensidad ix (0–255)</span>
+        <input type="number" name="ix" min="0" max="255" value="128" class="field" />
+      </label>
+
+      <label class="block sm:col-span-2 lg:col-span-3">
+        <span class="mb-1 block text-sm text-mist">Descripción</span>
+        <input name="description" maxlength="255" class="field" placeholder="Opcional" />
+      </label>
+
+      <div class="flex flex-wrap items-center gap-4 sm:col-span-2 lg:col-span-3">
+        <label class="inline-flex items-center gap-2 text-sm text-mist">
+          <input type="checkbox" name="on" checked class="accent-ember" /> Encendido
+        </label>
+        <label class="inline-flex items-center gap-2 text-sm text-mist">
+          <input type="checkbox" name="activate" class="accent-glow" /> Activar ahora (status=1)
+        </label>
+        <button type="submit" class="ml-auto rounded-lg bg-ember px-5 py-2.5 font-semibold text-ink hover:brightness-110">
+          Guardar
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <section class="rounded-xl border border-line bg-panel overflow-hidden">
+    <div class="border-b border-line px-5 py-4">
+      <h2 class="text-lg font-semibold">Configuraciones</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-left text-sm">
+        <thead class="bg-ink/60 text-mist">
+          <tr>
+            <th class="px-4 py-3 font-medium">ID</th>
+            <th class="px-4 py-3 font-medium">Nombre</th>
+            <th class="px-4 py-3 font-medium">Tipo</th>
+            <th class="px-4 py-3 font-medium">Status</th>
+            <th class="px-4 py-3 font-medium">Brillo</th>
+            <th class="px-4 py-3 font-medium">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in configs %}
+          <tr class="border-t border-line {% if c.status == 1 %}bg-ember/5{% endif %}">
+            <td class="px-4 py-3 font-mono text-xs">{{ c.id }}</td>
+            <td class="px-4 py-3">
+              <div class="font-medium">{{ c.name }}</div>
+              {% if c.description %}<div class="text-xs text-mist">{{ c.description }}</div>{% endif %}
+            </td>
+            <td class="px-4 py-3 font-mono text-xs text-mist">{{ c.config_type }}</td>
+            <td class="px-4 py-3">
+              {% if c.status == 1 %}
+              <span class="rounded-full bg-ember/20 px-2 py-0.5 text-xs font-medium text-ember">activa</span>
+              {% else %}
+              <span class="rounded-full bg-line px-2 py-0.5 text-xs text-mist">0</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 font-mono text-xs">{{ c.payload_json.get('bri', '—') }}</td>
+            <td class="px-4 py-3">
+              <div class="flex flex-wrap gap-2">
+                {% if c.status != 1 %}
+                <form method="post" action="/dashboard/configurations/{{ c.id }}/activate">
+                  <button class="rounded border border-glow/40 px-2 py-1 text-xs text-glow hover:bg-glow/10" type="submit">Activar</button>
+                </form>
+                {% endif %}
+                <form method="post" action="/dashboard/configurations/{{ c.id }}/delete" onsubmit="return confirm('¿Eliminar?');">
+                  <button class="rounded border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10" type="submit">Borrar</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="px-4 py-8 text-center text-mist">Sin configuraciones aún.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+{% endblock %}

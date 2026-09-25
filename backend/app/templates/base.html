@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Control LEDs{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: "#0f1419",
+            panel: "#1a222c",
+            line: "#2a3542",
+            ember: "#f0a202",
+            mist: "#9aa8b5",
+            glow: "#3dd6c6",
+          },
+          fontFamily: {
+            sans: ["Outfit", "system-ui", "sans-serif"],
+            mono: ["IBM Plex Mono", "ui-monospace", "monospace"],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body class="min-h-screen bg-ink text-slate-100 font-sans antialiased">
+  <div class="ambient" aria-hidden="true"></div>
+  {% block body %}{% endblock %}
+</body>
+</html>

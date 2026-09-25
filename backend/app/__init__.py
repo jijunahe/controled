@@ -1,0 +1,1 @@
+"""Control LEDs — backend FastAPI."""

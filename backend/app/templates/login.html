@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Login — Control LEDs{% endblock %}
+{% block body %}
+<main class="relative z-10 min-h-screen flex items-center justify-center px-4 py-10">
+  <section class="w-full max-w-md rounded-2xl border border-line bg-panel/90 p-8 shadow-2xl shadow-black/40 backdrop-blur">
+    <div class="mb-8">
+      <p class="font-mono text-xs uppercase tracking-[0.2em] text-glow">WLED · Gledopto</p>
+      <h1 class="mt-2 text-3xl font-bold tracking-tight text-white">Control LEDs</h1>
+      <p class="mt-2 text-sm text-mist">Accede al panel de configuración de iluminación.</p>
+    </div>
+
+    {% if error %}
+    <div class="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/login" class="space-y-4">
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Usuario</span>
+        <input
+          name="username"
+          required
+          autocomplete="username"
+          class="w-full rounded-lg border border-line bg-ink px-3 py-2.5 outline-none ring-ember focus:ring-2"
+          placeholder="admin"
+        />
+      </label>
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Contraseña</span>
+        <input
+          type="password"
+          name="password"
+          required
+          autocomplete="current-password"
+          class="w-full rounded-lg border border-line bg-ink px-3 py-2.5 outline-none ring-ember focus:ring-2"
+          placeholder="••••••••"
+        />
+      </label>
+      <button
+        type="submit"
+        class="w-full rounded-lg bg-ember px-4 py-2.5 font-semibold text-ink transition hover:brightness-110"
+      >
+        Entrar
+      </button>
+    </form>
+  </section>
+</main>
+{% endblock %}
