@@ -207,6 +207,26 @@ def dashboard(
     )
 
 
+@router.get("/music", response_class=HTMLResponse)
+def music_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    devices = db.query(WledDevice).order_by(WledDevice.id.asc()).all()
+    return templates.TemplateResponse(
+        "music.html",
+        {
+            "request": request,
+            "user": auth,
+            "devices": devices,
+        },
+    )
+
+
 @router.post("/dashboard/configurations")
 def create_from_form(
     name: str = Form(...),

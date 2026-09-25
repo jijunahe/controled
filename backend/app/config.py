@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     db_name: str = "control_leds"
 
     wled_default_ip: str = "192.168.1.100"
+    wled_timeout_seconds: float = 2.0
+    wled_dry_run: bool = True
+    music_max_fps: float = 20.0
+    music_min_interval_ms: int = 50
+
 
     @property
     def database_url(self) -> str:

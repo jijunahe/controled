@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Modo musical — Control LEDs{% endblock %}
+{% block body %}
+<header class="relative z-10 border-b border-line bg-panel/80 backdrop-blur">
+  <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
+    <div>
+      <p class="font-mono text-[11px] uppercase tracking-[0.18em] text-glow">WebSocket · Tiempo real</p>
+      <h1 class="text-xl font-semibold text-white sm:text-2xl">Modo musical</h1>
+    </div>
+    <div class="flex items-center gap-3 text-sm">
+      <a href="/dashboard" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Panel</a>
+      <span class="hidden text-mist sm:inline">{{ user.username }}</span>
+      <form method="post" action="/logout">
+        <button class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-ember hover:text-ember" type="submit">Salir</button>
+      </form>
+    </div>
+  </div>
+</header>
+
+<main class="relative z-10 mx-auto max-w-6xl space-y-6 px-4 py-8">
+  <section class="rounded-xl border border-line bg-panel p-5 sm:p-6">
+    <p class="text-sm text-mist">
+      Envía rafagas de color al Gledopto por WebSocket. El micrófono analiza el audio del dispositivo;
+      el simulador genera un pulso rítmico sin hardware de audio.
+    </p>
+
+    <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Dispositivo</span>
+        <select id="device_id" class="field">
+          <option value="">Default</option>
+          {% for d in devices %}
+          <option value="{{ d.id }}">{{ d.name }} ({{ d.ip_address }})</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Sensibilidad</span>
+        <input id="sensitivity" type="range" min="0.4" max="3" step="0.1" value="1.2" class="w-full accent-ember" />
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">Color base</span>
+        <input id="base_color" type="color" value="#ff2d55" class="h-11 w-full cursor-pointer rounded-lg border border-line bg-ink p-1" />
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-mist">BPM (simulador)</span>
+        <input id="bpm" type="number" min="60" max="180" value="120" class="field" />
+      </label>
+    </div>
+
+    <div class="mt-6 flex flex-wrap items-center gap-3">
+      <button id="btn-connect" type="button" class="rounded-lg bg-ember px-4 py-2.5 font-semibold text-ink hover:brightness-110">Conectar</button>
+      <button id="btn-mic" type="button" disabled class="rounded-lg border border-glow/40 px-4 py-2.5 text-glow disabled:opacity-40">Micrófono</button>
+      <button id="btn-sim" type="button" disabled class="rounded-lg border border-line px-4 py-2.5 text-mist disabled:opacity-40">Simulador playlist</button>
+      <button id="btn-stop" type="button" disabled class="rounded-lg border border-red-500/40 px-4 py-2.5 text-red-300 disabled:opacity-40">Detener</button>
+    </div>
+
+    <div class="mt-6 grid gap-4 sm:grid-cols-[1fr_auto]">
+      <div>
+        <canvas id="viz" width="800" height="120" class="h-28 w-full rounded-lg border border-line bg-ink"></canvas>
+      </div>
+      <div class="flex min-w-[7rem] flex-col items-center justify-center rounded-lg border border-line bg-ink p-3">
+        <div id="swatch" class="h-16 w-16 rounded-full border border-line shadow-lg shadow-black/40" style="background:#ff2d55"></div>
+        <p id="bri-label" class="mt-2 font-mono text-xs text-mist">bri —</p>
+      </div>
+    </div>
+
+    <div id="status" class="mt-4 rounded-lg border border-line bg-ink/60 px-3 py-2 font-mono text-xs text-mist">
+      Desconectado
+    </div>
+  </section>
+</main>
+
+<script src="/static/js/music.js"></script>
+{% endblock %}

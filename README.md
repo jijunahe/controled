@@ -7,7 +7,7 @@ Sistema de iluminación inteligente con **Gledopto GL-C-016WL-D (WLED)** y Raspb
 1. Esquema MySQL (`schema.sql`) ✅
 2. Backend FastAPI + JWT + panel web ✅
 3. Orquestador (polling MySQL → WLED HTTP API) ✅
-4. WebSockets modo musical / audio-reactivo
+4. WebSockets modo musical / audio-reactivo ✅
 
 ## Base de datos
 
@@ -17,7 +17,7 @@ sudo mysql < schema.sql
 
 Usuario de aplicación (desarrollo): `controled` / ver `backend/.env.example`.
 
-## Backend (fase 2)
+## Backend
 
 ```bash
 cd backend
@@ -31,6 +31,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8765
 > Nota: en este equipo los puertos 8000/8088 suelen estar ocupados por Docker; usa `8765` u otro libre.
 
 - Panel: http://localhost:8765/
+- Modo musical: http://localhost:8765/music
 - API docs: http://localhost:8765/docs
 - Login demo: `admin` / `admin123`
 
@@ -44,6 +45,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8765
 | PUT/DELETE | `/api/configurations/{id}` | Actualizar / borrar |
 | POST | `/api/configurations/{id}/activate` | `status=1` (resto a 0) |
 | GET | `/api/devices` | Dispositivos WLED |
+| WS | `/ws/music` | Modo musical tiempo real |
 
 ### Secuencias (colores con tiempo)
 
@@ -87,3 +89,21 @@ Comportamiento:
 4. Secuencia con `loop: true`: repite hasta que actives otra configuración
 
 Servicio systemd (opcional): ver `orchestrator/controled-orchestrator.service`.
+
+## Modo musical (fase 4) — WebSockets
+
+Página `/music`:
+
+1. **Conectar** → abre `ws://host/ws/music` (auth por cookie JWT)
+2. **Micrófono** → Web Audio analiza el audio y envía frames de color/brillo
+3. **Simulador playlist** → pulso rítmico por BPM sin micrófono
+
+Al iniciar la sesión se ponen en `status=0` las configs del orquestador para evitar conflictos.
+
+Mensaje de frame (cliente → servidor):
+
+```json
+{ "type": "frame", "bri": 200, "col": [255, 40, 80], "fx": 0, "on": true }
+```
+
+En `.env` del backend: `WLED_DRY_RUN=false` y `WLED_DEFAULT_IP` real para enviar al Gledopto.
