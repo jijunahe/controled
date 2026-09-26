@@ -1,10 +1,11 @@
-"""Ejecución de payloads estáticos y secuencias temporizadas."""
+"""Ejecución de payloads estáticos y secuencias temporizadas (multi-dispositivo)."""
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Optional
 
 from db import ActiveConfig, Database
 from wled import WledClient
@@ -19,9 +20,6 @@ def extract_wled_state(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """
-    Lista de pasos: [{"duration_ms": int, "state": {...}}, ...]
-    """
     raw_steps = payload.get("steps")
     if isinstance(raw_steps, list) and raw_steps:
         steps: list[dict[str, Any]] = []
@@ -60,19 +58,44 @@ class ConfigRunner:
         self.db = db
         self.wled = wled
 
-    def apply(self, config: ActiveConfig) -> bool:
-        """
-        Aplica la configuración.
-        True  = completada (o liberada tras fallo definitivo).
-        False = interrumpida / reintento pendiente (sigue status=1).
-        """
-        ip = self.wled.resolve_ip(config.device_ip)
+    def _post_all(
+        self, config: ActiveConfig, state: dict[str, Any]
+    ) -> tuple[bool, Optional[int], str]:
+        ips = config.device_ips or [self.wled.resolve_ip(None)]
+        errors: list[str] = []
+        last_status: Optional[int] = 200
 
+        def _one(ip: str) -> tuple[str, bool, Optional[int], str]:
+            ok, http_status, msg = self.wled.post_state(ip, state)
+            return ip, ok, http_status, msg
+
+        with ThreadPoolExecutor(max_workers=max(1, len(ips))) as pool:
+            futures = [pool.submit(_one, ip) for ip in ips]
+            for fut in as_completed(futures):
+                ip, ok, http_status, msg = fut.result()
+                if http_status is not None:
+                    last_status = http_status
+                if not ok:
+                    errors.append(f"{ip}: {msg}")
+                    self.db.log_step_error(
+                        config,
+                        http_status=http_status,
+                        error_message=f"{ip}: {msg}",
+                        payload_snapshot=state,
+                    )
+
+        if errors:
+            return False, last_status, "; ".join(errors)
+        return True, last_status, "ok"
+
+    def apply(self, config: ActiveConfig) -> bool:
         try:
             steps = normalize_steps(config.payload_json)
         except ValueError as exc:
             logger.error("Payload inválido #%s: %s", config.id, exc)
-            self.db.mark_failed_and_release(config, http_status=None, error_message=str(exc))
+            self.db.mark_failed_and_release(
+                config, http_status=None, error_message=str(exc)
+            )
             return True
 
         loop = should_loop(config.payload_json, config.config_type)
@@ -83,7 +106,7 @@ class ConfigRunner:
             config.config_type,
             len(steps),
             loop,
-            ip,
+            ", ".join(config.device_ips) or self.wled.resolve_ip(None),
         )
 
         cycle = 0
@@ -94,19 +117,13 @@ class ConfigRunner:
                     logger.info("Config #%s interrumpida en paso %s", config.id, idx)
                     return False
 
-                ok, http_status, msg = self.wled.post_state(ip, step["state"])
+                ok, http_status, msg = self._post_all(config, step["state"])
                 if not ok:
-                    self.db.log_step_error(
-                        config,
-                        http_status=http_status,
-                        error_message=f"paso {idx}: {msg}",
-                        payload_snapshot=step["state"],
-                    )
                     if loop:
-                        # Secuencia en bucle: dejar status=1 para reintentar luego
                         logger.warning(
-                            "Fallo de red en secuencia #%s; se reintentará en el próximo ciclo de poll",
+                            "Fallo de red en secuencia #%s; reintento en próximo poll: %s",
                             config.id,
+                            msg,
                         )
                         return False
                     self.db.mark_failed_and_release(

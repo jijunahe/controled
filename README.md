@@ -107,3 +107,18 @@ Mensaje de frame (cliente → servidor):
 ```
 
 En `.env` del backend: `WLED_DRY_RUN=false` y `WLED_DEFAULT_IP` real para enviar al Gledopto.
+
+## Dispositivos múltiples
+
+- Panel **Dispositivos** (`/devices`): alta/edición de Gledopto (nombre, IP, default).
+- Al crear una config puedes marcar **uno o varios** destinos.
+- Misma config a varios = broadcast; configs distintas a IPs distintas pueden estar activas a la vez.
+- El orquestador (rama actualizada) aplica cada config a todas sus IPs en paralelo.
+
+Tras actualizar el código en la Raspberry:
+
+```bash
+cd ~/CONTROL-LEDS
+git pull origin feature/wled-control-system
+sudo systemctl restart controled-orchestrator
+```

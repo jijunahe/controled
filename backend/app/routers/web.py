@@ -11,6 +11,7 @@ from app.deps import get_optional_user
 from app.models import LedConfiguration, User, WledDevice
 from app.security import create_access_token, verify_password
 from app.services import configurations as cfg_service
+from app.services import devices as device_service
 
 
 def _require_user(user: User | None) -> User | RedirectResponse:
@@ -191,7 +192,7 @@ def dashboard(
         db.query(LedConfiguration).order_by(LedConfiguration.id.desc()).limit(50).all()
     )
     devices = db.query(WledDevice).order_by(WledDevice.id.asc()).all()
-    active = next((c for c in configs if c.status == 1), None)
+    actives = [c for c in configs if c.status == 1]
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -199,11 +200,136 @@ def dashboard(
             "user": auth,
             "configs": configs,
             "devices": devices,
-            "active": active,
+            "actives": actives,
             "effects": WLED_EFFECTS,
             "message": request.query_params.get("msg"),
             "error": request.query_params.get("err"),
         },
+    )
+
+
+@router.get("/devices", response_class=HTMLResponse)
+def devices_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    devices = db.query(WledDevice).order_by(WledDevice.id.asc()).all()
+    return templates.TemplateResponse(
+        "devices.html",
+        {
+            "request": request,
+            "user": auth,
+            "devices": devices,
+            "message": request.query_params.get("msg"),
+            "error": request.query_params.get("err"),
+        },
+    )
+
+
+@router.post("/devices")
+def create_device_form(
+    name: str = Form(...),
+    ip_address: str = Form(...),
+    notes: str = Form(""),
+    is_default: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    if auth.role == "viewer":
+        return RedirectResponse(
+            url="/devices?err=Sin+permisos",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        device_service.create_device(
+            db,
+            name=name,
+            ip_address=ip_address,
+            is_default=is_default is not None,
+            notes=notes.strip() or None,
+        )
+    except ValueError as exc:
+        return RedirectResponse(
+            url=f"/devices?err={str(exc).replace(' ', '+')[:80]}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(
+        url="/devices?msg=Dispositivo+creado",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/devices/{device_id}/update")
+def update_device_form(
+    device_id: int,
+    name: str = Form(...),
+    ip_address: str = Form(...),
+    notes: str = Form(""),
+    is_default: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    if auth.role == "viewer":
+        return RedirectResponse(
+            url="/devices?err=Sin+permisos",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    device = db.get(WledDevice, device_id)
+    if not device:
+        return RedirectResponse(
+            url="/devices?err=No+encontrado",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        device_service.update_device(
+            db,
+            device,
+            name=name,
+            ip_address=ip_address,
+            is_default=is_default is not None,
+            notes=notes.strip() or None,
+        )
+    except ValueError as exc:
+        return RedirectResponse(
+            url=f"/devices?err={str(exc).replace(' ', '+')[:80]}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(
+        url="/devices?msg=Actualizado",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/devices/{device_id}/delete")
+def delete_device_form(
+    device_id: int,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    if auth.role == "viewer":
+        return RedirectResponse(
+            url="/devices?err=Sin+permisos",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    device = db.get(WledDevice, device_id)
+    if device:
+        device_service.delete_device(db, device)
+    return RedirectResponse(
+        url="/devices?msg=Eliminado",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
@@ -232,7 +358,7 @@ def create_from_form(
     name: str = Form(...),
     config_type: str = Form("static"),
     description: str = Form(""),
-    device_id: str = Form(""),
+    device_ids: list[int] | None = Form(None),
     bri: int = Form(128),
     fx: int = Form(0),
     sx: int = Form(128),
@@ -254,7 +380,7 @@ def create_from_form(
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
-    resolved_device_id = int(device_id) if device_id.strip().isdigit() else None
+    selected_ids = list(device_ids or [])
     is_on = on is not None
     bri_clamped = max(1, min(255, bri))
     sx_clamped = max(0, min(255, sx))
@@ -283,22 +409,22 @@ def create_from_form(
                 ix=ix_clamped,
                 color_hex=color,
             )
+        cfg_service.create_configuration(
+            db,
+            name=name.strip(),
+            config_type=config_type,
+            payload_json=payload,
+            user=auth,
+            device_ids=selected_ids,
+            description=description.strip() or None,
+            activate=activate is not None,
+        )
     except (ValueError, json.JSONDecodeError) as exc:
         return RedirectResponse(
             url=f"/dashboard?err={str(exc).replace(' ', '+')[:120]}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
-    cfg_service.create_configuration(
-        db,
-        name=name.strip(),
-        config_type=config_type,
-        payload_json=payload,
-        user=auth,
-        device_id=resolved_device_id,
-        description=description.strip() or None,
-        activate=activate is not None,
-    )
     return RedirectResponse(
         url="/dashboard?msg=Configuraci%C3%B3n+creada",
         status_code=status.HTTP_303_SEE_OTHER,

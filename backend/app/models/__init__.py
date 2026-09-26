@@ -5,18 +5,36 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Column,
     DateTime,
     Enum,
     ForeignKey,
     Integer,
     SmallInteger,
     String,
-    Text,
+    Table,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+led_configuration_devices = Table(
+    "led_configuration_devices",
+    Base.metadata,
+    Column(
+        "configuration_id",
+        Integer,
+        ForeignKey("led_configurations.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "device_id",
+        Integer,
+        ForeignKey("wled_devices.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
 
 
 class User(Base):
@@ -98,7 +116,14 @@ class LedConfiguration(Base):
     )
     applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
-    device: Mapped[Optional[WledDevice]] = relationship("WledDevice")
+    device: Mapped[Optional[WledDevice]] = relationship(
+        "WledDevice", foreign_keys=[device_id]
+    )
+    devices: Mapped[list[WledDevice]] = relationship(
+        "WledDevice",
+        secondary=led_configuration_devices,
+        lazy="selectin",
+    )
     creator: Mapped[Optional[User]] = relationship("User")
 
 

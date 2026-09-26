@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Orquestador Control LEDs — Raspberry Pi 3
-Polling MySQL (status=1) → POST http://<WLED_IP>/json/state
+Polling MySQL (status=1) → POST http://<WLED_IP>/json/state (multi-dispositivo)
 
 Uso:
   cd orchestrator
   python3 -m venv .venv && source .venv/bin/activate
   pip install -r requirements.txt
-  cp .env.example .env   # ajustar IP WLED y DRY_RUN=false
+  cp .env.example .env
   python orchestrator.py
 """
 
@@ -17,6 +17,7 @@ import logging
 import signal
 import sys
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from db import Database
 from runner import ConfigRunner
@@ -49,25 +50,42 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
 
     logger.info(
-        "Orquestador iniciado | poll=%.1fs | WLED default=%s | dry_run=%s",
+        "Orquestador iniciado | poll=%.1fs | WLED default=%s | dry_run=%s | multi-device=ON",
         settings.poll_interval_seconds,
         settings.wled_default_ip,
         settings.dry_run,
     )
 
-    while _running:
-        try:
-            active = db.fetch_active()
-            if active:
-                runner.apply(active)
-        except Exception:
-            logger.exception("Error en ciclo de orquestación")
+    running: dict[int, Future] = {}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        while _running:
+            try:
+                # Limpiar futures terminados
+                for cid, fut in list(running.items()):
+                    if fut.done():
+                        try:
+                            fut.result()
+                        except Exception:
+                            logger.exception("Worker config #%s falló", cid)
+                        running.pop(cid, None)
 
-        slept = 0.0
-        interval = max(0.5, settings.poll_interval_seconds)
-        while _running and slept < interval:
-            time.sleep(min(0.25, interval - slept))
-            slept += 0.25
+                actives = db.fetch_all_active()
+                for cfg in actives:
+                    if cfg.id not in running:
+                        logger.debug(
+                            "Lanzando worker #%s → %s",
+                            cfg.id,
+                            ", ".join(cfg.device_ips),
+                        )
+                        running[cfg.id] = executor.submit(runner.apply, cfg)
+            except Exception:
+                logger.exception("Error en ciclo de orquestación")
+
+            slept = 0.0
+            interval = max(0.5, settings.poll_interval_seconds)
+            while _running and slept < interval:
+                time.sleep(min(0.25, interval - slept))
+                slept += 0.25
 
     logger.info("Orquestador detenido")
     return 0

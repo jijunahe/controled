@@ -8,6 +8,7 @@
       <h1 class="text-xl font-semibold text-white sm:text-2xl">Control LEDs</h1>
     </div>
     <div class="flex items-center gap-3 text-sm">
+      <a href="/devices" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Dispositivos</a>
       <a href="/music" class="rounded-lg border border-glow/40 px-3 py-1.5 text-glow hover:bg-glow/10">Modo musical</a>
       <span class="hidden text-mist sm:inline">{{ user.username }} · {{ user.role }}</span>
       <form method="post" action="/logout">
@@ -29,10 +30,13 @@
 
   <section class="grid gap-4 sm:grid-cols-3">
     <article class="rounded-xl border border-line bg-panel p-4">
-      <p class="text-xs uppercase tracking-wide text-mist">Pendiente (status=1)</p>
-      <p class="mt-2 text-2xl font-semibold {% if active %}text-ember{% else %}text-mist{% endif %}">
-        {% if active %}#{{ active.id }} · {{ active.name }}{% else %}Ninguna{% endif %}
+      <p class="text-xs uppercase tracking-wide text-mist">Activas (status=1)</p>
+      <p class="mt-2 text-2xl font-semibold {% if actives %}text-ember{% else %}text-mist{% endif %}">
+        {{ actives|length }}
       </p>
+      {% for a in actives %}
+      <p class="mt-1 text-xs text-mist">#{{ a.id }} · {{ a.name }}</p>
+      {% endfor %}
     </article>
     <article class="rounded-xl border border-line bg-panel p-4">
       <p class="text-xs uppercase tracking-wide text-mist">Configuraciones</p>
@@ -41,9 +45,7 @@
     <article class="rounded-xl border border-line bg-panel p-4">
       <p class="text-xs uppercase tracking-wide text-mist">Dispositivos</p>
       <p class="mt-2 text-2xl font-semibold">{{ devices|length }}</p>
-      {% for d in devices %}
-      <p class="mt-1 font-mono text-xs text-mist">{{ d.name }} · {{ d.ip_address }}</p>
-      {% endfor %}
+      <a href="/devices" class="mt-2 inline-block text-xs text-glow hover:underline">Administrar →</a>
     </article>
   </section>
 
@@ -71,14 +73,19 @@
         </select>
       </label>
 
-      <label class="block">
-        <span class="mb-1 block text-sm text-mist">Dispositivo</span>
-        <select name="device_id" class="field">
-          <option value="">Default</option>
+      <label class="block sm:col-span-2 lg:col-span-3">
+        <span class="mb-1 block text-sm text-mist">Destinos Gledopto (uno, varios o ninguno = default)</span>
+        <div class="flex flex-wrap gap-3 rounded-lg border border-line bg-ink/40 p-3">
           {% for d in devices %}
-          <option value="{{ d.id }}">{{ d.name }} ({{ d.ip_address }})</option>
+          <label class="inline-flex items-center gap-2 text-sm text-mist">
+            <input type="checkbox" name="device_ids" value="{{ d.id }}" class="accent-glow" {% if d.is_default %}checked{% endif %} />
+            {{ d.name }} <span class="font-mono text-xs">({{ d.ip_address }})</span>
+            {% if d.is_default %}<span class="text-ember text-xs">default</span>{% endif %}
+          </label>
+          {% else %}
+          <span class="text-sm text-mist">No hay dispositivos. <a class="text-glow underline" href="/devices">Créalos aquí</a>.</span>
           {% endfor %}
-        </select>
+        </div>
       </label>
 
       <div id="static-fields" class="contents">
@@ -181,6 +188,14 @@
               {% endif %}
             </td>
             <td class="px-4 py-3 font-mono text-xs text-mist">
+              {% if c.devices %}
+                {% for d in c.devices %}{{ d.name }}{% if not loop.last %}, {% endif %}{% endfor %}
+              {% elif c.device_id %}
+                #{{ c.device_id }}
+              {% else %}
+                default
+              {% endif %}
+              ·
               {% if c.payload_json.get('steps') %}
                 {{ c.payload_json.steps|length }} pasos{% if c.payload_json.get('loop') %} · loop{% endif %}
               {% else %}

@@ -100,14 +100,26 @@ CREATE TABLE IF NOT EXISTS led_configurations (
   CONSTRAINT chk_led_cfg_status CHECK (status IN (0, 1)),
   CONSTRAINT chk_led_cfg_payload_object CHECK (JSON_TYPE(payload_json) = 'OBJECT')
 ) ENGINE=InnoDB
-  COMMENT='Cola maestra: el orquestador aplica el registro con status=1';
+  COMMENT='Cola maestra: el orquestador aplica registros con status=1';
 
--- Como máximo una configuración con status=1 a la vez.
-ALTER TABLE led_configurations
-  ADD COLUMN active_marker TINYINT GENERATED ALWAYS AS (
-    CASE WHEN status = 1 THEN 1 ELSE NULL END
-  ) STORED,
-  ADD UNIQUE KEY uk_led_one_active (active_marker);
+-- Destinos N:N (una config puede ir a varios Gledopto)
+CREATE TABLE IF NOT EXISTS led_configuration_devices (
+  configuration_id INT UNSIGNED NOT NULL,
+  device_id        INT UNSIGNED NOT NULL,
+  PRIMARY KEY (configuration_id, device_id),
+  KEY idx_lcd_device (device_id),
+  CONSTRAINT fk_lcd_configuration
+    FOREIGN KEY (configuration_id) REFERENCES led_configurations (id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_lcd_device
+    FOREIGN KEY (device_id) REFERENCES wled_devices (id)
+    ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB
+  COMMENT='Destinos WLED de cada configuración';
+
+-- (Migración 002 eliminó uk_led_one_active para permitir configs
+--  independientes en paralelo sobre distintos dispositivos.)
+
 
 -- -----------------------------------------------------------------------------
 -- Historial / auditoría de aplicaciones y cambios de estado
