@@ -8,7 +8,7 @@ Type=simple
 User=walter
 WorkingDirectory=/home/walter/controled/CONTROL-LEDS/orchestrator
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/walter/controled/CONTROL-LEDS/orchestrator/.venv/bin/python orchestrator.py
+ExecStart=/home/walter/controled/CONTROL-LEDS/orchestrator/.venv/bin/python /home/walter/controled/CONTROL-LEDS/orchestrator/orchestrator.py
 Restart=always
 RestartSec=3
 
