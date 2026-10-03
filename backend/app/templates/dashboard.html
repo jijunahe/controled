@@ -52,7 +52,8 @@
   <section class="rounded-xl border border-line bg-panel p-5 sm:p-6">
     <h2 class="text-lg font-semibold text-white">Nueva configuración</h2>
     <p class="mt-1 text-sm text-mist">
-      Estático: un color/efecto. Secuencia: varios colores con duración (ej. rojo 3s → azul 5s).
+      Estático / secuencia para TTGO WLED (JSON compacto). Los tiempos de secuencia viven en el orquestador;
+      cada paso sale por Wi‑Fi como <code>{"aes":"…"}</code> si hay <code>WLED_AES_KEY</code>.
     </p>
 
     <form id="config-form" method="post" action="/dashboard/configurations" class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

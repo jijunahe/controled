@@ -50,10 +50,13 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
 
     logger.info(
-        "Orquestador iniciado | poll=%.1fs | WLED default=%s | dry_run=%s | multi-device=ON",
+        "Orquestador iniciado | poll=%.1fs | WLED default=%s | dry_run=%s | "
+        "multi-device=ON | aes=%s | path=%s",
         settings.poll_interval_seconds,
         settings.wled_default_ip,
         settings.dry_run,
+        settings.wled_aes_key is not None,
+        settings.wled_json_path,
     )
 
     running: dict[int, Future] = {}

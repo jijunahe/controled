@@ -23,27 +23,24 @@ router = APIRouter(tags=["web"])
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-# Efectos WLED frecuentes para el formulario
+# Efectos documentados para TTGO / lora_rx (manual-json-lora.md)
 WLED_EFFECTS = [
     (0, "Solid"),
     (1, "Blink"),
     (2, "Breathe"),
     (3, "Wipe"),
-    (5, "Color Wipe"),
-    (9, "Scan"),
+    (4, "Wipe Random"),
+    (5, "Random Colors"),
+    (6, "Sweep"),
+    (7, "Dynamic"),
+    (8, "Colorloop"),
+    (9, "Rainbow"),
+    (10, "Scan"),
+    (11, "Scan Dual"),
     (12, "Fade"),
-    (15, "Theater"),
-    (23, "Rainbow"),
-    (27, "Android"),
-    (38, "Fire 2012"),
-    (42, "Aurora"),
-    (43, "Noise 1"),
-    (46, "Plasma"),
-    (57, "Lightning"),
-    (71, "Pacifica"),
-    (75, "Sunrise"),
-    (101, "Phased"),
-    (115, "Blends"),
+    (13, "Theater"),
+    (14, "Theater Rainbow"),
+    (15, "Running"),
 ]
 
 
@@ -68,19 +65,14 @@ def _build_payload(
     color_hex: str,
 ) -> dict:
     r, g, b = _hex_to_rgb(color_hex)
-    return {
-        "on": on,
-        "bri": bri,
-        "seg": [
-            {
-                "id": 0,
-                "fx": fx,
-                "sx": sx,
-                "ix": ix,
-                "col": [[r, g, b], [0, 0, 0], [0, 0, 0]],
-            }
-        ],
-    }
+    # Contrato TTGO: JSON compacto; col con 1 color (hasta 3 si se necesitan).
+    # No enviar transition/steps/loop por el aire HTTP cifrado.
+    seg: dict = {"id": 0, "fx": fx, "col": [[r, g, b]]}
+    if fx != 0:
+        seg["sx"] = sx
+    if ix not in (0, 128):
+        seg["ix"] = ix
+    return {"on": on, "bri": bri, "seg": [seg]}
 
 
 def _build_sequence_payload(

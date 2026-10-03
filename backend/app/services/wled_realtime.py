@@ -1,4 +1,4 @@
-"""Envío rápido de estados al Gledopto WLED (modo musical)."""
+"""Envío rápido de estados al WLED/TTGO (modo musical, opcional AES)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any, Optional
 import httpx
 
 from app.config import Settings
+from app.services.wled_aes import parse_aes_key_hex, prepare_http_body
 
 logger = logging.getLogger("controled.wled_realtime")
 
@@ -22,6 +23,7 @@ class WledRealtimeClient:
             1.0 / max(settings.music_max_fps, 1.0),
             settings.music_min_interval_ms / 1000.0,
         )
+        self._aes_key = parse_aes_key_hex(settings.wled_aes_key or None)
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -35,59 +37,60 @@ class WledRealtimeClient:
 
     @staticmethod
     def frame_to_state(frame: dict[str, Any]) -> dict[str, Any]:
-        """
-        Acepta:
-          - state completo WLED: {"state": {...}} o claves on/bri/seg
-          - frame ligero: {"bri": 180, "col": [r,g,b], "fx": 0, "on": true}
-        """
         if isinstance(frame.get("state"), dict):
             return frame["state"]
 
         if any(k in frame for k in ("seg", "on", "bri", "ps", "pl")) and "col" not in frame:
-            return {k: v for k, v in frame.items() if k not in {"type", "device_id", "source"}}
+            return {
+                k: v
+                for k, v in frame.items()
+                if k not in {"type", "device_id", "source", "transition"}
+            }
 
         bri = int(frame.get("bri", 128))
-        bri = max(1, min(255, bri))
+        bri = max(0, min(255, bri))
         fx = int(frame.get("fx", 0))
         sx = int(frame.get("sx", 128))
-        ix = int(frame.get("ix", 128))
         on = bool(frame.get("on", True))
         col = frame.get("col", [255, 0, 0])
         if not isinstance(col, (list, tuple)) or len(col) < 3:
             col = [255, 0, 0]
         r, g, b = (int(col[0]) % 256, int(col[1]) % 256, int(col[2]) % 256)
+        # Contrato TTGO: un color principal basta; máx. 3 en col
         return {
             "on": on,
             "bri": bri,
-            "transition": int(frame.get("transition", 0)),
-            "seg": [
-                {
-                    "id": 0,
-                    "fx": fx,
-                    "sx": sx,
-                    "ix": ix,
-                    "col": [[r, g, b], [0, 0, 0], [0, 0, 0]],
-                }
-            ],
+            "seg": [{"id": 0, "fx": fx, "sx": sx, "col": [[r, g, b]]}],
         }
 
     async def post_state(
         self, ip: str, state: dict[str, Any], *, force: bool = False
     ) -> tuple[bool, Optional[int], str, bool]:
-        """
-        Retorna (ok, http_status, mensaje, throttled).
-        throttled=True → se omitió el envío por rate-limit (no es error).
-        """
         if not force and not self._throttle_ok():
             return True, None, "throttled", True
 
-        url = f"http://{ip}/json/state"
+        path = self.settings.wled_json_path or "/json/state"
+        if not path.startswith("/"):
+            path = "/" + path
+        url = f"http://{ip}{path}"
+
+        try:
+            body = prepare_http_body(state, self._aes_key)
+        except ValueError as exc:
+            logger.warning("Payload inválido: %s", exc)
+            return False, None, str(exc), False
+
         if self.settings.wled_dry_run:
-            logger.debug("[DRY_RUN] POST %s → %s", url, state)
+            logger.debug(
+                "[DRY_RUN] POST %s aes=%s → %s",
+                url,
+                self._aes_key is not None,
+                body if self._aes_key is None else {"aes": "<…>"},
+            )
             return True, 200, "dry_run", False
 
         try:
-            response = await self._client.post(url, json=state)
+            response = await self._client.post(url, json=body)
             if 200 <= response.status_code < 300:
                 return True, response.status_code, "ok", False
             return False, response.status_code, response.text[:200], False

@@ -2,6 +2,8 @@
 
 Sistema de iluminación inteligente con **Gledopto GL-C-016WL-D (WLED)** y Raspberry Pi 3.
 
+Documentación técnica (web + orquestador, orientada a transferencia a IA): [`docs/DOCUMENTACION_TECNICA_WEB_ORQUESTADOR.md`](docs/DOCUMENTACION_TECNICA_WEB_ORQUESTADOR.md).
+
 ## Fases
 
 1. Esquema MySQL (`schema.sql`) ✅
@@ -106,7 +108,7 @@ Mensaje de frame (cliente → servidor):
 { "type": "frame", "bri": 200, "col": [255, 40, 80], "fx": 0, "on": true }
 ```
 
-En `.env` del backend: `WLED_DRY_RUN=false` y `WLED_DEFAULT_IP` real para enviar al Gledopto.
+En `.env` del backend/orquestador: `WLED_DRY_RUN=false` / `DRY_RUN=false`, `WLED_DEFAULT_IP` real, y `WLED_AES_KEY=<32 hex>` igual a la llave de **Usermods → lora_rx** en la TTGO. Con llave, el POST es `{"aes":"<base64>"}` (AES-128-GCM). Ver `docs/DOCUMENTACION_TECNICA_WEB_ORQUESTADOR.md` y `WLEDOFICIAL/WLED/usermods/lora_rx/manual-json-lora.md`.
 
 ## Dispositivos múltiples
 

@@ -27,7 +27,9 @@ class Settings(BaseSettings):
     wled_dry_run: bool = True
     music_max_fps: float = 20.0
     music_min_interval_ms: int = 50
-
+    # 32 hex chars; empty = cleartext HTTP (until TTGO has /aes128.key)
+    wled_aes_key: str = ""
+    wled_json_path: str = "/json/state"
 
     @property
     def database_url(self) -> str:
