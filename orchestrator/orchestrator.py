@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Orquestador Control LEDs — Raspberry Pi 3
-Polling MySQL (status=1) → POST http://<WLED_IP>/json/state (multi-dispositivo)
+Polling MySQL (status=1) → JSON en claro por USB a la TTGO transmisora LoRa
 
 Uso:
   cd orchestrator
@@ -20,9 +20,9 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 
 from db import Database
+from lora_link import LoRaLink
 from runner import ConfigRunner
 from settings import Settings
-from wled import WledClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,20 +43,17 @@ def _handle_signal(signum: int, _frame: object) -> None:
 def main() -> int:
     settings = Settings.from_env()
     db = Database(settings)
-    wled = WledClient(settings)
-    runner = ConfigRunner(db, wled)
+    lora = LoRaLink(settings.lora_usb_port, settings.lora_usb_baud, settings.dry_run)
+    runner = ConfigRunner(db, lora)
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
     logger.info(
-        "Orquestador iniciado | poll=%.1fs | WLED default=%s | dry_run=%s | "
-        "multi-device=ON | aes=%s | path=%s",
+        "Orquestador iniciado | poll=%.1fs | LoRa USB=%s | dry_run=%s",
         settings.poll_interval_seconds,
-        settings.wled_default_ip,
+        settings.lora_usb_port,
         settings.dry_run,
-        settings.wled_aes_key is not None,
-        settings.wled_json_path,
     )
 
     running: dict[int, Future] = {}

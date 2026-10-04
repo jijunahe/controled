@@ -12,6 +12,7 @@ from typing import Any, Generator, Optional
 import pymysql
 from pymysql.connections import Connection
 from pymysql.cursors import DictCursor
+from pymysql.err import IntegrityError
 
 from settings import Settings
 
@@ -129,14 +130,36 @@ class Database:
             return [self._row_to_config(conn, row) for row in rows]
 
     def is_still_active(self, config_id: int) -> bool:
+        return self.fetch_active_payload(config_id) is not None
+
+    def fetch_active_payload(self, config_id: int) -> Optional[dict[str, Any]]:
         with self.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT status FROM led_configurations WHERE id = %s",
+                    """
+                    SELECT payload_json
+                    FROM led_configurations
+                    WHERE id = %s AND status = 1
+                    """,
                     (config_id,),
                 )
                 row = cur.fetchone()
-        return bool(row and int(row["status"]) == 1)
+        if not row:
+            return None
+        payload = row["payload_json"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _config_exists(self, conn: Connection, config_id: int) -> bool:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM led_configurations WHERE id = %s LIMIT 1",
+                (config_id,),
+            )
+            return cur.fetchone() is not None
 
     def _insert_log(
         self,
@@ -151,30 +174,46 @@ class Database:
         payload_snapshot: Optional[dict[str, Any]] = None,
         device_id: Optional[int] = None,
     ) -> None:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO led_configuration_logs (
-                  configuration_id, device_id, action,
-                  previous_status, new_status, http_status,
-                  error_message, payload_snapshot, actor
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    config.id,
-                    device_id
-                    if device_id is not None
-                    else (config.device_ids[0] if config.device_ids else None),
-                    action,
-                    previous_status,
-                    new_status,
-                    http_status,
-                    (error_message[:500] if error_message else None),
-                    json.dumps(
-                        payload_snapshot or config.payload_json, ensure_ascii=False
+        # Si la config se borró mientras corría la secuencia, no romper el worker.
+        if not self._config_exists(conn, config.id):
+            logger.warning(
+                "Omitiendo log '%s' de config #%s: ya no existe en DB",
+                action,
+                config.id,
+            )
+            return
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO led_configuration_logs (
+                      configuration_id, device_id, action,
+                      previous_status, new_status, http_status,
+                      error_message, payload_snapshot, actor
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        config.id,
+                        device_id
+                        if device_id is not None
+                        else (config.device_ids[0] if config.device_ids else None),
+                        action,
+                        previous_status,
+                        new_status,
+                        http_status,
+                        (error_message[:500] if error_message else None),
+                        json.dumps(
+                            payload_snapshot or config.payload_json, ensure_ascii=False
+                        ),
+                        "orchestrator",
                     ),
-                    "orchestrator",
-                ),
+                )
+        except IntegrityError as exc:
+            logger.warning(
+                "No se pudo insertar log '%s' config #%s (FK/integridad): %s",
+                action,
+                config.id,
+                exc,
             )
 
     def mark_applied(

@@ -35,6 +35,8 @@ class Settings:
     wled_aes_key: Optional[bytes]
     wled_json_path: str
     lora_gateway_ips: frozenset[str]
+    lora_usb_port: str
+    lora_usb_baud: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -58,4 +60,6 @@ class Settings:
                 for item in os.getenv("WLED_LORA_GATEWAY_IPS", "").split(",")
                 if item.strip()
             ),
+            lora_usb_port=os.getenv("LORA_USB_PORT", "/dev/ttyACM0").strip() or "/dev/ttyACM0",
+            lora_usb_baud=int(os.getenv("LORA_USB_BAUD", "115200")),
         )

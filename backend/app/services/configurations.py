@@ -31,6 +31,38 @@ def _add_log(
     )
 
 
+def require_playlist_sequence(payload: dict[str, Any]) -> dict[str, Any]:
+    """Secuencia en bucle. Cada paso es un número de playlist y sus segundos."""
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError("payload_json debe describir la secuencia")
+
+    raw_steps = payload.get("steps")
+    if raw_steps is None and "playlist" in payload:
+        raw_steps = [
+            {
+                "playlist": payload.get("playlist"),
+                "seg": payload.get("seg", payload.get("seconds", 10)),
+            }
+        ]
+    if not isinstance(raw_steps, list) or not raw_steps:
+        raise ValueError("la secuencia necesita al menos un paso")
+    if len(raw_steps) > 32:
+        raise ValueError("la secuencia admite como máximo 32 pasos")
+
+    steps: list[dict[str, int]] = []
+    for index, step in enumerate(raw_steps, start=1):
+        if not isinstance(step, dict):
+            raise ValueError(f"paso {index} inválido")
+        playlist = step.get("playlist")
+        seconds = step.get("seg", step.get("seconds", step.get("duration_sec")))
+        if isinstance(playlist, bool) or not isinstance(playlist, int) or not 1 <= playlist <= 250:
+            raise ValueError(f"paso {index}: la playlist debe ser un entero entre 1 y 250")
+        if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= 3600:
+            raise ValueError(f"paso {index}: seg debe ser un entero entre 1 y 3600")
+        steps.append({"playlist": playlist, "seg": seconds})
+    return {"loop": True, "steps": steps}
+
+
 def resolve_target_device_ids(
     db: Session, config: LedConfiguration
 ) -> list[int]:
@@ -133,6 +165,7 @@ def create_configuration(
     ids = list(device_ids or [])
     if device_id is not None and device_id not in ids:
         ids.append(device_id)
+    payload_json = require_playlist_sequence(payload_json)
 
     config = LedConfiguration(
         name=name,
@@ -197,7 +230,7 @@ def update_configuration(
     if config_type is not None:
         config.config_type = config_type
     if payload_json is not None:
-        config.payload_json = payload_json
+        config.payload_json = require_playlist_sequence(payload_json)
     if description is not None:
         config.description = description
 

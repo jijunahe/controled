@@ -1,155 +1,97 @@
-"""Ejecución de payloads estáticos y secuencias temporizadas (multi-dispositivo)."""
+"""Repite la secuencia de playlists y envía cada número por LoRa."""
 
 from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Optional
+from typing import Any
 
 from db import ActiveConfig, Database
-from wled import WledClient
+from lora_link import LoRaLink, LoRaLinkError
 
 logger = logging.getLogger("orchestrator.runner")
 
-_META_KEYS = {"steps", "loop", "mode", "repeat", "name"}
 
+def playlist_steps(payload: dict[str, Any]) -> list[dict[str, int]]:
+    raw_steps = payload.get("steps") if isinstance(payload, dict) else None
+    if raw_steps is None and isinstance(payload, dict) and "playlist" in payload:
+        raw_steps = [
+            {
+                "playlist": payload.get("playlist"),
+                "seg": payload.get("seg", payload.get("seconds", 10)),
+            }
+        ]
+    if not isinstance(raw_steps, list) or not raw_steps:
+        raise LoRaLinkError("la secuencia no tiene pasos")
 
-def extract_wled_state(payload: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in payload.items() if k not in _META_KEYS}
-
-
-def normalize_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_steps = payload.get("steps")
-    if isinstance(raw_steps, list) and raw_steps:
-        steps: list[dict[str, Any]] = []
-        for idx, step in enumerate(raw_steps):
-            if not isinstance(step, dict):
-                raise ValueError(f"Paso {idx} inválido")
-            duration = step.get("duration_ms", step.get("duration", 1000))
-            try:
-                duration_ms = max(100, int(float(duration)))
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"duration_ms inválida en paso {idx}") from exc
-            state = step.get("state")
-            if state is None:
-                state = extract_wled_state(step)
-            if not isinstance(state, dict) or not state:
-                raise ValueError(f"state vacío en paso {idx}")
-            steps.append({"duration_ms": duration_ms, "state": state})
-        return steps
-
-    state = extract_wled_state(payload)
-    if not state:
-        raise ValueError("payload sin estado WLED utilizable")
-    return [{"duration_ms": 0, "state": state}]
-
-
-def should_loop(payload: dict[str, Any], config_type: str) -> bool:
-    if "steps" not in payload:
-        return False
-    if "loop" in payload:
-        return bool(payload["loop"])
-    return config_type in {"sequence", "playlist"}
+    steps: list[dict[str, int]] = []
+    for index, step in enumerate(raw_steps, start=1):
+        if not isinstance(step, dict):
+            raise LoRaLinkError(f"paso {index} inválido")
+        playlist = step.get("playlist")
+        seconds = step.get("seg", step.get("seconds", step.get("duration_sec")))
+        if isinstance(playlist, bool) or not isinstance(playlist, int) or not 1 <= playlist <= 250:
+            raise LoRaLinkError(f"paso {index}: playlist fuera de rango")
+        if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 1:
+            raise LoRaLinkError(f"paso {index}: seg inválido")
+        steps.append({"playlist": playlist, "seg": seconds})
+    return steps
 
 
 class ConfigRunner:
-    def __init__(self, db: Database, wled: WledClient) -> None:
+    def __init__(self, db: Database, lora: LoRaLink) -> None:
         self.db = db
-        self.wled = wled
-
-    def _post_all(
-        self, config: ActiveConfig, state: dict[str, Any]
-    ) -> tuple[bool, Optional[int], str]:
-        ips = config.device_ips or [self.wled.resolve_ip(None)]
-        errors: list[str] = []
-        last_status: Optional[int] = 200
-
-        def _one(ip: str) -> tuple[str, bool, Optional[int], str]:
-            ok, http_status, msg = self.wled.post_state(ip, state)
-            return ip, ok, http_status, msg
-
-        with ThreadPoolExecutor(max_workers=max(1, len(ips))) as pool:
-            futures = [pool.submit(_one, ip) for ip in ips]
-            for fut in as_completed(futures):
-                ip, ok, http_status, msg = fut.result()
-                if http_status is not None:
-                    last_status = http_status
-                if not ok:
-                    errors.append(f"{ip}: {msg}")
-                    self.db.log_step_error(
-                        config,
-                        http_status=http_status,
-                        error_message=f"{ip}: {msg}",
-                        payload_snapshot=state,
-                    )
-
-        if errors:
-            return False, last_status, "; ".join(errors)
-        return True, last_status, "ok"
+        self.lora = lora
 
     def apply(self, config: ActiveConfig) -> bool:
-        try:
-            steps = normalize_steps(config.payload_json)
-        except ValueError as exc:
-            logger.error("Payload inválido #%s: %s", config.id, exc)
-            self.db.mark_failed_and_release(
-                config, http_status=None, error_message=str(exc)
-            )
-            return True
-
-        loop = should_loop(config.payload_json, config.config_type)
-        logger.info(
-            "Aplicando #%s '%s' type=%s steps=%s loop=%s → %s",
-            config.id,
-            config.name,
-            config.config_type,
-            len(steps),
-            loop,
-            ", ".join(config.device_ips) or self.wled.resolve_ip(None),
-        )
-
+        logger.info("Secuencia #%s '%s' en bucle", config.id, config.name)
         cycle = 0
         while True:
-            cycle += 1
-            for idx, step in enumerate(steps):
-                if not self.db.is_still_active(config.id):
-                    logger.info("Config #%s interrumpida en paso %s", config.id, idx)
-                    return False
-
-                ok, http_status, msg = self._post_all(config, step["state"])
-                if not ok:
-                    if loop:
-                        logger.warning(
-                            "Fallo de red en secuencia #%s; reintento en próximo poll: %s",
-                            config.id,
-                            msg,
-                        )
-                        return False
-                    self.db.mark_failed_and_release(
-                        config, http_status=http_status, error_message=msg
-                    )
-                    return True
-
-                duration_ms = int(step["duration_ms"])
-                if duration_ms > 0:
-                    self._interruptible_sleep(config.id, duration_ms / 1000.0)
-                    if not self.db.is_still_active(config.id):
-                        logger.info("Config #%s interrumpida durante espera", config.id)
-                        return False
-
-            if not loop:
-                break
-
-            logger.debug("Secuencia #%s ciclo %s OK; repitiendo", config.id, cycle)
-            if not self.db.is_still_active(config.id):
+            payload = self.db.fetch_active_payload(config.id)
+            if payload is None:
+                logger.info("Secuencia #%s ya no está activa", config.id)
                 return False
+            try:
+                steps = playlist_steps(payload)
+            except LoRaLinkError as exc:
+                logger.error("Secuencia inválida #%s: %s", config.id, exc)
+                self.db.mark_failed_and_release(
+                    config, http_status=None, error_message=str(exc)
+                )
+                return True
 
-        self.db.mark_applied(config, http_status=200)
-        return True
+            cycle += 1
+            logger.info("Secuencia #%s ciclo %s, %s pasos", config.id, cycle, len(steps))
+            for index, step in enumerate(steps, start=1):
+                if self.db.fetch_active_payload(config.id) is None:
+                    logger.info("Secuencia #%s detenida", config.id)
+                    return False
+                packet = {"playlist": step["playlist"]}
+                try:
+                    self.lora.send_payload(packet)
+                except LoRaLinkError as exc:
+                    logger.warning(
+                        "Fallo LoRa #%s ciclo %s paso %s: %s",
+                        config.id,
+                        cycle,
+                        index,
+                        exc,
+                    )
+                    self._sleep(config.id, 2)
+                    continue
+                logger.info(
+                    "LoRa #%s ciclo %s paso %s/%s %s durante %ss",
+                    config.id,
+                    cycle,
+                    index,
+                    len(steps),
+                    packet,
+                    step["seg"],
+                )
+                self._sleep(config.id, step["seg"])
 
-    def _interruptible_sleep(self, config_id: int, seconds: float) -> None:
-        end = time.monotonic() + max(0.0, seconds)
+    def _sleep(self, config_id: int, seconds: int) -> None:
+        end = time.monotonic() + max(0, seconds)
         while time.monotonic() < end:
             if not self.db.is_still_active(config_id):
                 return

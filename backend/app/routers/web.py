@@ -55,6 +55,29 @@ def _hex_to_rgb(color_hex: str) -> tuple[int, int, int]:
     )
 
 
+def _build_segment(
+    *,
+    seg_id: int,
+    fx: int,
+    sx: int,
+    ix: int,
+    color_hex: str,
+    start: int | None = None,
+    stop: int | None = None,
+) -> dict:
+    r, g, b = _hex_to_rgb(color_hex)
+    seg: dict = {"id": max(0, min(31, seg_id)), "fx": fx, "col": [[r, g, b]]}
+    if start is not None:
+        seg["start"] = max(0, int(start))
+    if stop is not None:
+        seg["stop"] = max(0, int(stop))
+    if fx != 0:
+        seg["sx"] = sx
+    if ix not in (0, 128):
+        seg["ix"] = ix
+    return seg
+
+
 def _build_payload(
     *,
     on: bool,
@@ -63,15 +86,47 @@ def _build_payload(
     sx: int,
     ix: int,
     color_hex: str,
+    zones_raw: list[dict] | None = None,
 ) -> dict:
-    r, g, b = _hex_to_rgb(color_hex)
-    # Contrato TTGO: JSON compacto; col con 1 color (hasta 3 si se necesitan).
-    # No enviar transition/steps/loop por el aire HTTP cifrado.
-    seg: dict = {"id": 0, "fx": fx, "col": [[r, g, b]]}
-    if fx != 0:
-        seg["sx"] = sx
-    if ix not in (0, 128):
-        seg["ix"] = ix
+    # Contrato TTGO: JSON compacto. Varias zonas = varios seg con start/stop.
+    # Máx. 5 segmentos de un color por paquete LoRa/AES.
+    if zones_raw:
+        segs: list[dict] = []
+        for idx, zone in enumerate(zones_raw[:5]):
+            try:
+                start = int(zone.get("start", 0))
+                stop = int(zone.get("stop", 0))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Zona {idx}: start/stop inválidos") from exc
+            if stop <= start:
+                raise ValueError(f"Zona {idx}: stop debe ser mayor que start")
+            try:
+                z_fx = int(zone.get("fx", fx))
+            except (TypeError, ValueError):
+                z_fx = fx
+            try:
+                z_sx = int(zone.get("sx", sx))
+            except (TypeError, ValueError):
+                z_sx = sx
+            color = str(zone.get("color", color_hex))
+            segs.append(
+                _build_segment(
+                    seg_id=idx,
+                    fx=z_fx,
+                    sx=max(0, min(255, z_sx)),
+                    ix=ix,
+                    color_hex=color,
+                    start=start,
+                    stop=stop,
+                )
+            )
+        if not segs:
+            raise ValueError("Se requiere al menos una zona")
+        return {"on": on, "bri": bri, "seg": segs}
+
+    seg = _build_segment(
+        seg_id=0, fx=fx, sx=sx, ix=ix, color_hex=color_hex
+    )
     return {"on": on, "bri": bri, "seg": [seg]}
 
 
@@ -101,6 +156,7 @@ def _build_sequence_payload(
             fx = int(step.get("fx", default_fx))
         except (TypeError, ValueError):
             fx = default_fx
+        zones = step.get("zones")
         state = _build_payload(
             on=on,
             bri=max(1, min(255, bri)),
@@ -108,6 +164,7 @@ def _build_sequence_payload(
             sx=default_sx,
             ix=default_ix,
             color_hex=color,
+            zones_raw=zones if isinstance(zones, list) else None,
         )
         steps.append({"duration_ms": duration_ms, "state": state})
     if not steps:
@@ -348,18 +405,9 @@ def music_page(
 @router.post("/dashboard/configurations")
 def create_from_form(
     name: str = Form(...),
-    config_type: str = Form("static"),
-    description: str = Form(""),
-    device_ids: list[int] | None = Form(None),
-    bri: int = Form(128),
-    fx: int = Form(0),
-    sx: int = Form(128),
-    ix: int = Form(128),
-    color: str = Form("#ff0000"),
-    on: str | None = Form(None),
-    activate: str | None = Form(None),
-    loop: str | None = Form(None),
     sequence_json: str = Form(""),
+    description: str = Form(""),
+    activate: str | None = Form(None),
     db: Session = Depends(get_db),
     user: User | None = Depends(get_optional_user),
 ):
@@ -372,42 +420,17 @@ def create_from_form(
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
-    selected_ids = list(device_ids or [])
-    is_on = on is not None
-    bri_clamped = max(1, min(255, bri))
-    sx_clamped = max(0, min(255, sx))
-    ix_clamped = max(0, min(255, ix))
-
     try:
-        if config_type in {"sequence", "playlist"}:
-            steps_raw = json.loads(sequence_json) if sequence_json.strip() else []
-            if not isinstance(steps_raw, list):
-                raise ValueError("sequence_json inválido")
-            payload = _build_sequence_payload(
-                steps_raw=steps_raw,
-                loop=loop is not None,
-                on=is_on,
-                default_bri=bri_clamped,
-                default_fx=fx,
-                default_sx=sx_clamped,
-                default_ix=ix_clamped,
-            )
-        else:
-            payload = _build_payload(
-                on=is_on,
-                bri=bri_clamped,
-                fx=fx,
-                sx=sx_clamped,
-                ix=ix_clamped,
-                color_hex=color,
-            )
+        parsed = json.loads(sequence_json) if sequence_json.strip() else {}
+        if not isinstance(parsed, dict):
+            raise ValueError("la secuencia no es válida")
+        payload = cfg_service.require_playlist_sequence(parsed)
         cfg_service.create_configuration(
             db,
             name=name.strip(),
-            config_type=config_type,
+            config_type="playlist",
             payload_json=payload,
             user=auth,
-            device_ids=selected_ids,
             description=description.strip() or None,
             activate=activate is not None,
         )

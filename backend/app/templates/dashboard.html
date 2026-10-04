@@ -52,89 +52,29 @@
   <section class="rounded-xl border border-line bg-panel p-5 sm:p-6">
     <h2 class="text-lg font-semibold text-white">Nueva configuración</h2>
     <p class="mt-1 text-sm text-mist">
-      Estático / secuencia para TTGO WLED (JSON compacto). Los tiempos de secuencia viven en el orquestador;
-      cada paso sale por Wi‑Fi como <code>{"aes":"…"}</code> si hay <code>WLED_AES_KEY</code>.
+      Cada paso es el número de playlist ya guardado en el receptor y cuántos segundos
+      permanece. El orquestador repite la lista sin fin y envía
+      <code>{"playlist": N}</code> por LoRa en cada paso.
     </p>
 
     <form id="config-form" method="post" action="/dashboard/configurations" class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <input type="hidden" name="sequence_json" id="sequence_json" value="" />
-
       <label class="block sm:col-span-2 lg:col-span-1">
         <span class="mb-1 block text-sm text-mist">Nombre</span>
-        <input name="name" required maxlength="120" class="field" placeholder="Rojo-Azul alternado" />
+        <input name="name" required maxlength="120" class="field" placeholder="Noche en bucle" />
       </label>
 
-      <label class="block">
-        <span class="mb-1 block text-sm text-mist">Tipo</span>
-        <select name="config_type" id="config_type" class="field">
-          <option value="static">static</option>
-          <option value="sequence">sequence</option>
-          <option value="playlist">playlist</option>
-          <option value="audio_reactive">audio_reactive</option>
-        </select>
-      </label>
-
-      <label class="block sm:col-span-2 lg:col-span-3">
-        <span class="mb-1 block text-sm text-mist">Destinos Gledopto (uno, varios o ninguno = default)</span>
-        <div class="flex flex-wrap gap-3 rounded-lg border border-line bg-ink/40 p-3">
-          {% for d in devices %}
-          <label class="inline-flex items-center gap-2 text-sm text-mist">
-            <input type="checkbox" name="device_ids" value="{{ d.id }}" class="accent-glow" {% if d.is_default %}checked{% endif %} />
-            {{ d.name }} <span class="font-mono text-xs">({{ d.ip_address }})</span>
-            {% if d.is_default %}<span class="text-ember text-xs">default</span>{% endif %}
-          </label>
-          {% else %}
-          <span class="text-sm text-mist">No hay dispositivos. <a class="text-glow underline" href="/devices">Créalos aquí</a>.</span>
-          {% endfor %}
-        </div>
-      </label>
-
-      <div id="static-fields" class="contents">
-        <label class="block">
-          <span class="mb-1 block text-sm text-mist">Color</span>
-          <input type="color" name="color" value="#ff6b00" class="h-11 w-full cursor-pointer rounded-lg border border-line bg-ink p-1" />
-        </label>
-
-        <label class="block">
-          <span class="mb-1 block text-sm text-mist">Brillo (1–255)</span>
-          <input type="number" name="bri" min="1" max="255" value="160" class="field" />
-        </label>
-
-        <label class="block">
-          <span class="mb-1 block text-sm text-mist">Efecto WLED</span>
-          <select name="fx" class="field">
-            {% for id, label in effects %}
-            <option value="{{ id }}">{{ id }} — {{ label }}</option>
-            {% endfor %}
-          </select>
-        </label>
-
-        <label class="block">
-          <span class="mb-1 block text-sm text-mist">Velocidad sx (0–255)</span>
-          <input type="number" name="sx" min="0" max="255" value="128" class="field" />
-        </label>
-
-        <label class="block">
-          <span class="mb-1 block text-sm text-mist">Intensidad ix (0–255)</span>
-          <input type="number" name="ix" min="0" max="255" value="128" class="field" />
-        </label>
-      </div>
-
-      <div id="sequence-panel" class="hidden sm:col-span-2 lg:col-span-3 space-y-3 rounded-lg border border-line bg-ink/50 p-4">
+      <div class="sm:col-span-2 lg:col-span-3 space-y-3 rounded-lg border border-line bg-ink/50 p-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <p class="font-medium text-white">Pasos de la secuencia</p>
-            <p class="text-xs text-mist">Cada paso: color + duración en segundos. El orquestador los aplica en orden.</p>
+            <p class="font-medium text-white">Secuencia</p>
+            <p class="text-xs text-mist">Se repite sin fin. Si cambias esta lista, la siguiente vuelta usa la nueva.</p>
           </div>
           <button type="button" id="add-step" class="rounded-lg border border-glow/40 px-3 py-1.5 text-sm text-glow hover:bg-glow/10">
             + Paso
           </button>
         </div>
         <div id="steps-list" class="space-y-2"></div>
-        <label class="inline-flex items-center gap-2 text-sm text-mist">
-          <input type="checkbox" name="loop" id="loop" checked class="accent-glow" />
-          Repetir en bucle (hasta activar otra config)
-        </label>
       </div>
 
       <label class="block sm:col-span-2 lg:col-span-3">
@@ -143,9 +83,6 @@
       </label>
 
       <div class="flex flex-wrap items-center gap-4 sm:col-span-2 lg:col-span-3">
-        <label class="inline-flex items-center gap-2 text-sm text-mist">
-          <input type="checkbox" name="on" checked class="accent-ember" /> Encendido
-        </label>
         <label class="inline-flex items-center gap-2 text-sm text-mist">
           <input type="checkbox" name="activate" class="accent-glow" /> Activar ahora (status=1)
         </label>
@@ -189,18 +126,12 @@
               {% endif %}
             </td>
             <td class="px-4 py-3 font-mono text-xs text-mist">
-              {% if c.devices %}
-                {% for d in c.devices %}{{ d.name }}{% if not loop.last %}, {% endif %}{% endfor %}
-              {% elif c.device_id %}
-                #{{ c.device_id }}
+              {% set steps = c.payload_json.get('steps') if c.payload_json is mapping else none %}
+              {% if steps %}
+                {% for step in steps %}{{ step.playlist }} ({{ step.seg if step.seg is not none else step.seconds }}s){% if not loop.last %}, {% endif %}{% endfor %}
+                · loop
               {% else %}
-                default
-              {% endif %}
-              ·
-              {% if c.payload_json.get('steps') %}
-                {{ c.payload_json.steps|length }} pasos{% if c.payload_json.get('loop') %} · loop{% endif %}
-              {% else %}
-                bri {{ c.payload_json.get('bri', '—') }}
+                playlist {{ c.payload_json.get('playlist', '—') }}
               {% endif %}
             </td>
             <td class="px-4 py-3">
