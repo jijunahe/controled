@@ -1,4 +1,7 @@
-"""Repite la secuencia de playlists y envía cada número por LoRa."""
+"""Repite la secuencia de playlists y envía cada número por LoRa.
+
+Soporta modo sincronizado (dos fases) para ejecución simultánea en todos los receptores.
+"""
 
 from __future__ import annotations
 
@@ -39,9 +42,17 @@ def playlist_steps(payload: dict[str, Any]) -> list[dict[str, int]]:
 
 
 class ConfigRunner:
-    def __init__(self, db: Database, lora: LoRaLink) -> None:
+    def __init__(
+        self, 
+        db: Database, 
+        lora: LoRaLink,
+        sync_enabled: bool = True,
+        sync_delay_ms: int = 300,
+    ) -> None:
         self.db = db
         self.lora = lora
+        self.sync_enabled = sync_enabled
+        self.sync_delay_ms = sync_delay_ms
 
     def apply(self, config: ActiveConfig) -> bool:
         logger.info("Secuencia #%s '%s' en bucle", config.id, config.name)
@@ -68,7 +79,10 @@ class ConfigRunner:
                     return False
                 packet = {"playlist": step["playlist"]}
                 try:
-                    self.lora.send_payload(packet)
+                    if self.sync_enabled:
+                        self.lora.send_payload_synced(packet, self.sync_delay_ms)
+                    else:
+                        self.lora.send_payload(packet)
                 except LoRaLinkError as exc:
                     logger.warning(
                         "Fallo LoRa #%s ciclo %s paso %s: %s",
