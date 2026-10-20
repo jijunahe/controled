@@ -1,9 +1,17 @@
-"""Enlace USB con la TTGO transmisora. El JSON sale en claro, sin AES ni MessagePack."""
+"""Enlace USB con la TTGO transmisora. El JSON sale en claro, sin AES ni MessagePack.
+
+Protocolo de sincronización de dos fases:
+  Fase 1 (PREPARE): {"playlist":N,"sync":1,"seq":123}
+  Fase 2 (EXECUTE): {"exec":123}
+
+Los receptores almacenan el comando en fase 1 y lo ejecutan simultáneamente en fase 2.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
+import random
 import threading
 import time
 from typing import Any, Optional
@@ -149,3 +157,62 @@ class LoRaLink:
                 return status, detail
             time.sleep(0.01)
         raise LoRaLinkError("la TTGO no respondió")
+
+    def send_payload_synced(
+        self, payload: dict[str, Any], sync_delay_ms: int = 300
+    ) -> tuple[bytes, bytes]:
+        """Envía un payload usando el protocolo de sincronización de dos fases.
+        
+        Fase 1 (PREPARE): Envía el payload con sync=1 y un seq aleatorio.
+                          Los receptores almacenan pero no ejecutan.
+        Fase 2 (EXECUTE): Después de sync_delay_ms, envía {"exec": seq}.
+                          Todos los receptores ejecutan simultáneamente.
+        
+        Returns:
+            Tupla con (bytes_fase1, bytes_fase2)
+        """
+        clean = integer_payload(payload)
+        seq = random.randint(1, 65535)
+        
+        # Fase 1: PREPARE
+        prepare_payload = {**clean, "sync": 1, "seq": seq}
+        prepare_raw = clear_json_bytes(prepare_payload)
+        
+        if self.dry_run:
+            logger.info(
+                "[DRY_RUN] LoRa SYNC fase 1 (PREPARE) → %s", 
+                prepare_raw.decode("utf-8")
+            )
+        else:
+            with self._lock:
+                self._ensure_open()
+                self._transmit(prepare_raw)
+            logger.info(
+                "LoRa SYNC fase 1 (PREPARE) seq=%d → %s", 
+                seq, prepare_raw.decode("utf-8")
+            )
+        
+        # Esperar para asegurar que todos los receptores reciban
+        time.sleep(sync_delay_ms / 1000.0)
+        
+        # Fase 2: EXECUTE
+        execute_payload = {"exec": seq}
+        execute_raw = json.dumps(
+            execute_payload, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        
+        if self.dry_run:
+            logger.info(
+                "[DRY_RUN] LoRa SYNC fase 2 (EXECUTE) → %s", 
+                execute_raw.decode("utf-8")
+            )
+        else:
+            with self._lock:
+                self._ensure_open()
+                self._transmit(execute_raw)
+            logger.info(
+                "LoRa SYNC fase 2 (EXECUTE) seq=%d → %s", 
+                seq, execute_raw.decode("utf-8")
+            )
+        
+        return prepare_raw, execute_raw

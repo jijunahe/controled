@@ -522,7 +522,40 @@ Posible evolución futura (no implementada): bridge gateway LoRa ↔ órdenes de
 
 ---
 
-## 14. Archivos clave para lectura prioritaria por una IA
+## 14. Sincronización LoRa (ejecución simultánea)
+
+### 14.1 Problema
+
+Cuando el orquestador envía un comando por LoRa a múltiples TTGO32, cada dispositivo lo ejecuta inmediatamente al recibirlo. Debido a variaciones en tiempo de propagación y procesamiento, los dispositivos pueden ejecutar con hasta 1 segundo de diferencia, muy notable en playlists con efectos.
+
+### 14.2 Solución: Protocolo de dos fases
+
+**Fase 1 (PREPARE):** El orquestador envía el comando con un ID de secuencia. Los receptores almacenan pero NO ejecutan.
+```json
+{"playlist": 5, "sync": 1, "seq": 12345}
+```
+
+**Fase 2 (EXECUTE):** Después de un delay configurable, envía el comando de ejecución. Todos ejecutan simultáneamente.
+```json
+{"exec": 12345}
+```
+
+### 14.3 Configuración
+
+Variables en `orchestrator/.env`:
+
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `LORA_SYNC_ENABLED` | `true` | Habilita protocolo de dos fases |
+| `LORA_SYNC_DELAY_MS` | `300` | Delay entre PREPARE y EXECUTE (ms) |
+
+### 14.4 Firmware receptor
+
+El usermod `lora_rx` en `WLEDOFICIAL/WLED/usermods/lora_rx/` implementa el protocolo de sincronización. Ver `README.md` del usermod para instalación.
+
+---
+
+## 15. Archivos clave para lectura prioritaria por una IA
 
 1. `backend/app/main.py`
 2. `backend/app/services/configurations.py`
@@ -531,10 +564,12 @@ Posible evolución futura (no implementada): bridge gateway LoRa ↔ órdenes de
 5. `backend/app/routers/web.py`
 6. `orchestrator/orchestrator.py`
 7. `orchestrator/runner.py`
-8. `orchestrator/db.py`
-9. `schema.sql` + `migrations/002_multi_device.sql`
-10. `README.md`
+8. `orchestrator/lora_link.py` (sincronización LoRa)
+9. `orchestrator/db.py`
+10. `schema.sql` + `migrations/002_multi_device.sql`
+11. `WLEDOFICIAL/WLED/usermods/lora_rx/` (receptor sincronizado)
+12. `README.md`
 
 ---
 
-*Última actualización alineada al estado del repo en la rama `feature/wled-control-system` (web v0.4 + orquestador multi-device).*
+*Última actualización alineada al estado del repo en la rama `feature/wled-control-system` (web v0.4 + orquestador multi-device + sincronización LoRa).*

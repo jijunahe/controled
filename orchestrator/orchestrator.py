@@ -44,16 +44,23 @@ def main() -> int:
     settings = Settings.from_env()
     db = Database(settings)
     lora = LoRaLink(settings.lora_usb_port, settings.lora_usb_baud, settings.dry_run)
-    runner = ConfigRunner(db, lora)
+    runner = ConfigRunner(
+        db, 
+        lora,
+        sync_enabled=settings.lora_sync_enabled,
+        sync_delay_ms=settings.lora_sync_delay_ms,
+    )
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
     logger.info(
-        "Orquestador iniciado | poll=%.1fs | LoRa USB=%s | dry_run=%s",
+        "Orquestador iniciado | poll=%.1fs | LoRa USB=%s | dry_run=%s | sync=%s (delay=%dms)",
         settings.poll_interval_seconds,
         settings.lora_usb_port,
         settings.dry_run,
+        settings.lora_sync_enabled,
+        settings.lora_sync_delay_ms,
     )
 
     running: dict[int, Future] = {}

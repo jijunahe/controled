@@ -37,6 +37,8 @@ class Settings:
     lora_gateway_ips: frozenset[str]
     lora_usb_port: str
     lora_usb_baud: int
+    lora_sync_enabled: bool
+    lora_sync_delay_ms: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -62,4 +64,6 @@ class Settings:
             ),
             lora_usb_port=os.getenv("LORA_USB_PORT", "/dev/ttyACM0").strip() or "/dev/ttyACM0",
             lora_usb_baud=int(os.getenv("LORA_USB_BAUD", "115200")),
+            lora_sync_enabled=_bool(os.getenv("LORA_SYNC_ENABLED"), default=True),
+            lora_sync_delay_ms=int(os.getenv("LORA_SYNC_DELAY_MS", "300")),
         )
