@@ -6,6 +6,9 @@
 //   A5 5A | cmd | [len u16 | payload | crc16] 
 //   cmd 0x01 ping
 //   cmd 0x02 transmitir. crc16 es CRC-16/CCITT-FALSE del payload.
+//   cmd 0x03 igual que transmitir y, después, escuchar 2.4 s.
+//            Cada trama recibida sale hacia el USB antes de la respuesta:
+//            A5 5A | 0x04 | len u16 | payload | crc16
 // Respuesta:
 //   A5 5A | cmd|0x80 | status | detail i16
 //   status 0 ok, 1 crc, 2 longitud, 3 radio, 4 orden desconocida
@@ -29,6 +32,9 @@ constexpr uint8_t kOledScl = 22;
 
 constexpr uint8_t kCmdPing = 0x01;
 constexpr uint8_t kCmdTx = 0x02;
+constexpr uint8_t kCmdPoll = 0x03;
+constexpr uint8_t kCmdUplink = 0x04;
+constexpr uint32_t kListenMs = 2400;
 constexpr uint8_t kStatusOk = 0;
 constexpr uint8_t kStatusCrc = 1;
 constexpr uint8_t kStatusLen = 2;
@@ -103,41 +109,90 @@ void resetRx() {
   rxCrc = 0;
 }
 
-void transmitPayload() {
+void emitUplink(const uint8_t *data, uint16_t len) {
+  if (len == 0 || len > kMaxPayload) {
+    return;
+  }
+  const uint16_t crc = crc16(data, len);
+  const uint8_t header[5] = {
+      0xA5, 0x5A, kCmdUplink, static_cast<uint8_t>(len & 0xFF), static_cast<uint8_t>(len >> 8)};
+  Serial.write(header, sizeof(header));
+  Serial.write(data, len);
+  const uint8_t tail[2] = {static_cast<uint8_t>(crc & 0xFF), static_cast<uint8_t>(crc >> 8)};
+  Serial.write(tail, sizeof(tail));
+  Serial.flush();
+}
+
+void listenReplies() {
+  showStatus("USB a LoRa", "escuchando", "bit de vida");
+  const uint32_t start = millis();
+  uint8_t heard = 0;
+  while (static_cast<uint32_t>(millis() - start) < kListenMs) {
+    const uint32_t left = kListenMs - static_cast<uint32_t>(millis() - start);
+    if (left < 20) {
+      break;
+    }
+    uint8_t buf[kMaxPayload];
+    const int16_t state = radio.receive(buf, sizeof(buf), left);
+    if (state == RADIOLIB_ERR_RX_TIMEOUT) {
+      continue;
+    }
+    if (state != RADIOLIB_ERR_NONE) {
+      delay(20);
+      continue;
+    }
+    const size_t len = radio.getPacketLength();
+    if (len > 0 && len <= kMaxPayload && buf[0] == '{') {
+      emitUplink(buf, static_cast<uint16_t>(len));
+      heard++;
+    }
+  }
+  char line[24];
+  snprintf(line, sizeof(line), "avisos %u", heard);
+  showStatus("USB a LoRa", "bit de vida", line);
+}
+
+void transmitPayload(bool listen) {
+  const uint8_t cmd = listen ? kCmdPoll : kCmdTx;
   if (!radioReady) {
-    reply(kCmdTx, kStatusRadio, -1);
+    reply(cmd, kStatusRadio, -1);
     showStatus("USB a LoRa", "radio apagada", "sin envio");
     return;
   }
   if (rxLen == 0 || rxLen > kMaxPayload) {
-    reply(kCmdTx, kStatusLen, 0);
+    reply(cmd, kStatusLen, 0);
     return;
   }
   const uint16_t expect = crc16(rxBuf, rxLen);
   if (expect != rxCrc) {
-    reply(kCmdTx, kStatusCrc, 0);
+    reply(cmd, kStatusCrc, 0);
     showStatus("USB a LoRa", "CRC incorrecto", "no se envio");
     return;
   }
 
   digitalWrite(kLedPin, HIGH);
-  showStatus("USB a LoRa", "enviando...", String(rxLen).c_str());
+  showStatus("USB a LoRa", listen ? "preguntando..." : "enviando...", String(rxLen).c_str());
   const int16_t state = radio.transmit(rxBuf, rxLen);
   digitalWrite(kLedPin, LOW);
 
   if (state != RADIOLIB_ERR_NONE) {
-    reply(kCmdTx, kStatusRadio, state);
+    reply(cmd, kStatusRadio, state);
     showStatus("USB a LoRa", "error de radio", String(state).c_str());
     return;
   }
 
   packetsSent++;
-  reply(kCmdTx, kStatusOk, static_cast<int16_t>(packetsSent));
-  char count[24];
-  snprintf(count, sizeof(count), "paquetes %u", packetsSent);
-  char sizeLine[24];
-  snprintf(sizeLine, sizeof(sizeLine), "%u bytes en el aire", rxLen);
-  showStatus("USB a LoRa", sizeLine, count);
+  if (listen) {
+    listenReplies();
+  }
+  reply(cmd, kStatusOk, static_cast<int16_t>(packetsSent));
+  if (!listen) {
+    char count[24];
+    snprintf(count, sizeof(count), "paquetes %u", packetsSent);
+    char sizeLine[24];
+    snprintf(sizeLine, sizeof(sizeLine), "%u bytes en el aire", rxLen);
+    showStatus("USB a LoRa", sizeLine, count);
+  }
 }
 
 void handleByte(uint8_t byte) {
@@ -159,7 +214,7 @@ void handleByte(uint8_t byte) {
       if (byte == kCmdPing) {
         reply(kCmdPing, radioReady ? kStatusOk : kStatusRadio, 1);
         resetRx();
-      } else if (byte == kCmdTx) {
+      } else if (byte == kCmdTx || byte == kCmdPoll) {
         rxState = RxState::LenLo;
       } else {
         reply(byte, kStatusCmd, 0);
@@ -173,7 +228,7 @@ void handleByte(uint8_t byte) {
     case RxState::LenHi:
       rxLen |= static_cast<uint16_t>(byte) << 8;
       if (rxLen == 0 || rxLen > kMaxPayload) {
-        reply(kCmdTx, kStatusLen, static_cast<int16_t>(rxLen));
+        reply(rxCmd, kStatusLen, static_cast<int16_t>(rxLen));
         resetRx();
       } else {
         rxGot = 0;
@@ -192,7 +247,7 @@ void handleByte(uint8_t byte) {
       break;
     case RxState::CrcHi:
       rxCrc |= static_cast<uint16_t>(byte) << 8;
-      transmitPayload();
+      transmitPayload(rxCmd == kCmdPoll);
       resetRx();
       break;
   }

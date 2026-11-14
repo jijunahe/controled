@@ -20,7 +20,8 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 
 from db import Database
-from lora_link import LoRaLink
+from heartbeat import format_mac, parse_heartbeat
+from lora_link import LoRaLink, LoRaLinkError
 from runner import ConfigRunner
 from settings import Settings
 
@@ -40,6 +41,15 @@ def _handle_signal(signum: int, _frame: object) -> None:
     _running = False
 
 
+def _hold(db: Database, config_id: int) -> bool:
+    play = db.current_play()
+    if play.mode == "off":
+        return False
+    if play.mode == "run":
+        return play.config is not None and play.config.id == config_id
+    return db.is_still_active(config_id)
+
+
 def main() -> int:
     settings = Settings.from_env()
     db = Database(settings)
@@ -57,10 +67,26 @@ def main() -> int:
     )
 
     running: dict[int, Future] = {}
+    off_sent = 0.0
+    heartbeat_at = 0.0
     with ThreadPoolExecutor(max_workers=8) as executor:
         while _running:
             try:
-                # Limpiar futures terminados
+                if time.monotonic() - heartbeat_at >= 20:
+                    heartbeat_at = time.monotonic()
+                    try:
+                        for frame in lora.poll_heartbeat():
+                            beat = parse_heartbeat(frame)
+                            if beat is None:
+                                continue
+                            db.record_heartbeat(beat["mac"], beat["rssi"])
+                            logger.info(
+                                "Bit de vida %s rssi %s",
+                                format_mac(beat["mac"]),
+                                beat["rssi"],
+                            )
+                    except LoRaLinkError as exc:
+                        logger.warning("Bit de vida: %s", exc)
                 for cid, fut in list(running.items()):
                     if fut.done():
                         try:
@@ -69,15 +95,33 @@ def main() -> int:
                             logger.exception("Worker config #%s falló", cid)
                         running.pop(cid, None)
 
-                actives = db.fetch_all_active()
-                for cfg in actives:
+                play = db.current_play()
+                if play.mode == "off":
+                    if time.monotonic() - off_sent >= 5:
+                        try:
+                            lora.send_payload({"on": False})
+                            off_sent = time.monotonic()
+                            logger.info("Luces apagadas (%s)", play.reason)
+                        except LoRaLinkError as exc:
+                            logger.warning("No se pudo apagar por LoRa: %s", exc)
+                elif play.mode == "run" and play.config is not None:
+                    cfg = play.config
                     if cfg.id not in running:
-                        logger.debug(
-                            "Lanzando worker #%s → %s",
-                            cfg.id,
-                            ", ".join(cfg.device_ips),
+                        logger.info("Horario %s → #%s %s", play.reason, cfg.id, cfg.name)
+                        running[cfg.id] = executor.submit(
+                            runner.apply, cfg, lambda cid=cfg.id: _hold(db, cid)
                         )
-                        running[cfg.id] = executor.submit(runner.apply, cfg)
+                else:
+                    for cfg in db.fetch_all_active():
+                        if cfg.id not in running:
+                            logger.debug(
+                                "Lanzando worker #%s → %s",
+                                cfg.id,
+                                ", ".join(cfg.device_ips),
+                            )
+                            running[cfg.id] = executor.submit(
+                                runner.apply, cfg, lambda cid=cfg.id: _hold(db, cid)
+                            )
             except Exception:
                 logger.exception("Error en ciclo de orquestación")
 

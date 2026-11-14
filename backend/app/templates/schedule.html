@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Horario — Control LEDs{% endblock %}
+{% block body %}
+<header class="relative z-10 border-b border-line bg-panel/80 backdrop-blur">
+  <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
+    <div>
+      <p class="font-mono text-[11px] uppercase tracking-[0.18em] text-glow">Colombia · encendido</p>
+      <h1 class="text-xl font-semibold text-white sm:text-2xl">Horario</h1>
+    </div>
+    <div class="flex items-center gap-3 text-sm">
+      <a href="/dashboard" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Panel</a>
+      <a href="/simulacion" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Simulación</a>
+      <a href="/vida" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Nodos</a>
+      <span class="hidden text-mist sm:inline">{{ user.username }} · {{ user.role }}</span>
+      <form method="post" action="/logout">
+        <button class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-ember hover:text-ember" type="submit">Salir</button>
+      </form>
+    </div>
+  </div>
+</header>
+
+<main class="relative z-10 mx-auto max-w-6xl space-y-8 px-4 py-8">
+  {% if message %}
+  <div class="rounded-lg border border-glow/30 bg-glow/10 px-4 py-2 text-sm text-glow">{{ message }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">{{ error }}</div>
+  {% endif %}
+
+  <section class="rounded-xl border border-line bg-panel p-5 sm:p-6">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 class="text-lg font-semibold text-white">Horarios configurados</h2>
+        <p class="mt-1 text-sm text-mist">Días y horas en Colombia. Cada horario enciende una configuración ya guardada. Los inactivos no se ejecutan. Fuera de los activos, las luces se apagan.</p>
+        {% if schedule_note %}
+        <p class="mt-2 text-sm text-white">{{ schedule_note }}</p>
+        {% endif %}
+      </div>
+      {% if schedule and not schedule_error %}
+      <form method="post" action="/dashboard/schedule/enabled">
+        <input type="hidden" name="enabled" value="{{ '0' if schedule_enabled else '1' }}" />
+        <button class="rounded-lg border border-line px-3 py-1.5 text-sm text-mist hover:text-white" type="submit">
+          {{ "Volver al modo manual" if schedule_enabled else "Activar horario" }}
+        </button>
+      </form>
+      {% endif %}
+    </div>
+    {% if schedule_error %}
+    <p class="mt-4 text-sm text-red-200">{{ schedule_error }}</p>
+    {% else %}
+    <form method="post" action="{% if editing %}/dashboard/schedule/intervals/{{ editing.id }}{% else %}/dashboard/schedule/intervals{% endif %}" class="mt-5 space-y-4">
+      {% if editing %}
+      <p class="text-sm text-white">Editando el horario de {{ editing.days }} · {{ editing.start }}–{{ editing.end }}</p>
+      {% endif %}
+      <div class="flex flex-wrap gap-2">
+        {% for label in day_labels %}
+        <label class="day-chip">
+          <input type="checkbox" name="day_{{ loop.index0 }}" value="1" {% if editing and loop.index0 in editing.weekdays %}checked{% endif %} />
+          <span>{{ label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <div class="flex flex-wrap items-end gap-3">
+        <label class="block">
+          <span class="mb-1 block text-xs text-mist">Enciende</span>
+          <input type="time" name="start_time" required value="{{ editing.start if editing else '18:00' }}" class="field w-36" />
+        </label>
+        <label class="block">
+          <span class="mb-1 block text-xs text-mist">Apaga</span>
+          <input type="time" name="end_time" required value="{{ editing.end if editing else '22:00' }}" class="field w-36" />
+        </label>
+        <label class="block min-w-56 flex-1">
+          <span class="mb-1 block text-xs text-mist">Configuración</span>
+          <select name="configuration_id" required class="field">
+            {% for choice in schedule_choices %}
+            <option value="{{ choice.id }}" {% if editing and choice.id == editing.configuration_id %}selected{% endif %}>#{{ choice.id }} · {{ choice.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit" class="rounded-lg bg-ember px-4 py-2.5 font-semibold text-ink hover:brightness-110" {% if not schedule_choices %}disabled{% endif %}>
+          {{ "Guardar cambios" if editing else "Agregar horario" }}
+        </button>
+        {% if editing %}
+        <a href="/schedule" class="rounded-lg border border-line px-4 py-2.5 text-sm text-mist hover:text-white">Cancelar</a>
+        {% endif %}
+      </div>
+    </form>
+    <div class="mt-5 space-y-2">
+      {% for row in schedule_rows %}
+      <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2 {% if editing and editing.id == row.id %}border-glow{% elif row.enabled %}border-line bg-ink/40{% else %}border-line bg-ink/20 opacity-70{% endif %}">
+        <div>
+          <p class="text-sm text-white">{{ row.days }} · {{ row.start }}–{{ row.end }} · {{ row.config_name }}</p>
+          <p class="mt-1 text-xs {% if row.enabled %}text-glow{% else %}text-mist{% endif %}">{{ "Activo" if row.enabled else "Inactivo" }}</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <a href="/schedule?edit={{ row.id }}" class="rounded border border-line px-2 py-1 text-xs text-mist hover:text-white">Editar</a>
+          <form method="post" action="/dashboard/schedule/intervals/{{ row.id }}/enabled">
+            <input type="hidden" name="enabled" value="{{ '0' if row.enabled else '1' }}" />
+            <button class="rounded border border-line px-2 py-1 text-xs text-mist hover:text-white" type="submit">
+              {{ "Desactivar" if row.enabled else "Activar" }}
+            </button>
+          </form>
+          <form method="post" action="/dashboard/schedule/intervals/{{ row.id }}/delete" onsubmit="return confirm('¿Eliminar este horario?');">
+            <button class="rounded border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10" type="submit">Eliminar</button>
+          </form>
+        </div>
+      </div>
+      {% else %}
+      <p class="text-sm text-mist">Todavía no hay horarios. Sin ellos, sigue mandando la configuración activa.</p>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

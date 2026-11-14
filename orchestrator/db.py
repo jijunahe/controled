@@ -6,17 +6,25 @@ import json
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Generator, Optional
 
 import pymysql
 from pymysql.connections import Connection
 from pymysql.cursors import DictCursor
-from pymysql.err import IntegrityError
+from pymysql.err import IntegrityError, ProgrammingError
 
+from schedule_clock import as_time, clock_now, interval_covers
 from settings import Settings
 
 logger = logging.getLogger("orchestrator.db")
+
+
+@dataclass
+class PlayOrder:
+    mode: str
+    config: Optional[ActiveConfig] = None
+    reason: str = ""
 
 
 @dataclass
@@ -32,6 +40,8 @@ class ActiveConfig:
 class Database:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._schedule_missing = False
+        self._heartbeat_missing = False
 
     @contextmanager
     def connection(self) -> Generator[Connection, None, None]:
@@ -292,3 +302,117 @@ class Database:
                 payload_snapshot=payload_snapshot,
                 device_id=device_id,
             )
+
+    def fetch_payload(self, config_id: int) -> Optional[dict[str, Any]]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT payload_json FROM led_configurations WHERE id = %s",
+                    (config_id,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        payload = row["payload_json"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def record_heartbeat(self, mac: str, rssi: Optional[int]) -> None:
+        seen = datetime.now(timezone.utc).replace(tzinfo=None)
+        try:
+            with self.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO led_heartbeats (mac, last_seen, rssi, packets)
+                        VALUES (%s, %s, %s, 1)
+                        ON DUPLICATE KEY UPDATE
+                          last_seen = VALUES(last_seen),
+                          rssi = VALUES(rssi),
+                          packets = packets + 1
+                        """,
+                        (mac, seen, rssi),
+                    )
+        except ProgrammingError as exc:
+            if exc.args and exc.args[0] == 1146:
+                if not self._heartbeat_missing:
+                    logger.warning("Todavía no está la tabla del bit de vida")
+                    self._heartbeat_missing = True
+                return
+            raise
+
+    def current_play(self) -> PlayOrder:
+        try:
+            with self.connection() as conn:
+                return self._current_play(conn)
+        except ProgrammingError as exc:
+            if exc.args and exc.args[0] == 1146:
+                if not self._schedule_missing:
+                    logger.warning(
+                        "Todavía no están las tablas del horario; sigo con la configuración activa"
+                    )
+                    self._schedule_missing = True
+                return PlayOrder("manual", reason="sin tablas de horario")
+            raise
+
+    def _current_play(self, conn: Connection) -> PlayOrder:
+        with conn.cursor() as cur:
+            cur.execute("SELECT paused FROM led_power_override WHERE id = 1")
+            power = cur.fetchone()
+        if power and int(power["paused"]):
+            return PlayOrder("off", reason="apagado manual")
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT i.id, i.configuration_id, i.start_time, i.end_time, d.weekday
+                FROM led_schedule_intervals i
+                JOIN led_schedules s ON s.id = i.schedule_id AND s.enabled = 1
+                JOIN led_schedule_interval_days d ON d.interval_id = i.id
+                WHERE i.enabled = 1
+                ORDER BY i.id
+                """
+            )
+            rows = cur.fetchall()
+        if not rows:
+            return PlayOrder("manual", reason="sin horario")
+
+        grouped: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            item = grouped.setdefault(
+                int(row["id"]),
+                {
+                    "configuration_id": int(row["configuration_id"]),
+                    "start": as_time(row["start_time"]),
+                    "end": as_time(row["end_time"]),
+                    "days": set(),
+                },
+            )
+            item["days"].add(int(row["weekday"]))
+
+        now = clock_now()
+        for interval_id in sorted(grouped):
+            item = grouped[interval_id]
+            if not interval_covers(item["start"], item["end"], now, item["days"]):
+                continue
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, config_type, payload_json, device_id
+                    FROM led_configurations
+                    WHERE id = %s
+                    """,
+                    (item["configuration_id"],),
+                )
+                config_row = cur.fetchone()
+            if not config_row:
+                continue
+            return PlayOrder(
+                "run",
+                config=self._row_to_config(conn, config_row),
+                reason=f"intervalo {interval_id}",
+            )
+        return PlayOrder("off", reason="fuera de horario")

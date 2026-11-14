@@ -8,8 +8,9 @@
       <h1 class="text-xl font-semibold text-white sm:text-2xl">Control LEDs</h1>
     </div>
     <div class="flex items-center gap-3 text-sm">
-      <a href="/devices" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Dispositivos</a>
-      <a href="/music" class="rounded-lg border border-glow/40 px-3 py-1.5 text-glow hover:bg-glow/10">Modo musical</a>
+      <a href="/schedule" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Horario</a>
+      <a href="/simulacion" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Simulación</a>
+      <a href="/vida" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Nodos</a>
       <span class="hidden text-mist sm:inline">{{ user.username }} · {{ user.role }}</span>
       <form method="post" action="/logout">
         <button class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-ember hover:text-ember" type="submit">
@@ -45,30 +46,64 @@
     <article class="rounded-xl border border-line bg-panel p-4">
       <p class="text-xs uppercase tracking-wide text-mist">Dispositivos</p>
       <p class="mt-2 text-2xl font-semibold">{{ devices|length }}</p>
-      <a href="/devices" class="mt-2 inline-block text-xs text-glow hover:underline">Administrar →</a>
     </article>
   </section>
 
   <section class="rounded-xl border border-line bg-panel p-5 sm:p-6">
-    <h2 class="text-lg font-semibold text-white">Nueva configuración</h2>
-    <p class="mt-1 text-sm text-mist">
-      Cada paso es el número de playlist ya guardado en el receptor y cuántos segundos
-      permanece. El orquestador repite la lista sin fin y envía
-      <code>{"playlist": N}</code> por LoRa en cada paso.
-    </p>
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <h2 class="text-lg font-semibold text-white">Luces</h2>
+        <p class="mt-1 text-sm text-mist">
+          {% if schedule_error %}{{ schedule_error }}{% else %}{{ schedule_note }}{% endif %}
+        </p>
+      </div>
+      {% if not schedule_error %}
+      <div class="flex flex-wrap gap-2">
+        <form method="post" action="/dashboard/power/off">
+          <button class="power-off" type="submit" {% if paused %}disabled{% endif %}>Apagar luces</button>
+        </form>
+        <form method="post" action="/dashboard/power/on">
+          <button class="power-on" type="submit" {% if not paused %}disabled{% endif %}>Encender</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </section>
 
-    <form id="config-form" method="post" action="/dashboard/configurations" class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  <section class="rounded-xl border border-line bg-panel p-5 sm:p-6">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 class="text-lg font-semibold text-white">{% if editing %}Editar configuración{% else %}Nueva configuración{% endif %}</h2>
+        <p class="mt-1 text-sm text-mist">
+          Elige un patrón de Navidad o de una bandera, ajusta los colores y pulsa Guardar.
+          Nada se escribe hasta ese botón. El paquete no puede pasar de 250 bytes.
+        </p>
+      </div>
+      {% if editing %}
+      <a href="/dashboard" class="rounded-lg border border-line px-3 py-1.5 text-sm text-mist hover:text-white">Cancelar</a>
+      {% endif %}
+    </div>
+
+    <form id="config-form" method="post" action="{% if editing %}/dashboard/configurations/{{ editing.id }}/update{% else %}/dashboard/configurations{% endif %}" class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <input type="hidden" name="sequence_json" id="sequence_json" value="" />
+      <input type="hidden" name="color_json" id="color_json" value="" />
       <label class="block sm:col-span-2 lg:col-span-1">
         <span class="mb-1 block text-sm text-mist">Nombre</span>
-        <input name="name" required maxlength="120" class="field" placeholder="Noche en bucle" />
+        <input name="name" id="config-name" required maxlength="120" class="field" placeholder="Noche en bucle" value="{{ editing.name if editing else '' }}" />
       </label>
+      <fieldset class="sm:col-span-2 lg:col-span-2">
+        <legend class="mb-1 text-sm text-mist">Tipo</legend>
+        <div class="flex flex-wrap gap-4 text-sm text-white">
+          <label class="inline-flex items-center gap-2"><input type="radio" name="effect_type" value="playlist" class="accent-glow" checked /> Secuencia de playlist</label>
+          <label class="inline-flex items-center gap-2"><input type="radio" name="effect_type" value="color" class="accent-glow" /> Color y efecto</label>
+        </div>
+      </fieldset>
 
-      <div class="sm:col-span-2 lg:col-span-3 space-y-3 rounded-lg border border-line bg-ink/50 p-4">
+      <div id="playlist-box" class="sm:col-span-2 lg:col-span-3 space-y-3 rounded-lg border border-line bg-ink/50 p-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
             <p class="font-medium text-white">Secuencia</p>
-            <p class="text-xs text-mist">Se repite sin fin. Si cambias esta lista, la siguiente vuelta usa la nueva.</p>
+            <p class="text-xs text-mist">El bucle repite estos pasos en orden y, al terminar, vuelve a empezar. Cada paso elige un preset de la lista y cuántos segundos dura.</p>
           </div>
           <button type="button" id="add-step" class="rounded-lg border border-glow/40 px-3 py-1.5 text-sm text-glow hover:bg-glow/10">
             + Paso
@@ -77,20 +112,117 @@
         <div id="steps-list" class="space-y-2"></div>
       </div>
 
+      <div id="color-box" class="hidden sm:col-span-2 lg:col-span-3 space-y-3 rounded-lg border border-line bg-ink/50 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p class="font-medium text-white">Color y efecto</p>
+            <p class="text-xs text-mist">Toca una categoría para llenar la tira. Después puedes cambiar colores, efecto o tramos. Se guarda solo con Guardar.</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" id="split-segments" class="rounded-lg border border-line px-3 py-1.5 text-sm text-mist hover:text-white">
+              Dividir en partes iguales
+            </button>
+            <button type="button" id="add-segment" class="rounded-lg border border-glow/40 px-3 py-1.5 text-sm text-glow hover:bg-glow/10">
+              + Parte
+            </button>
+          </div>
+        </div>
+        <div class="pd-studio">
+          <div class="pd-wheel-wrap">
+            <input type="color" id="pd-wheel" class="pd-wheel" value="#fcd116" aria-label="Color" />
+            <div class="flex flex-wrap gap-2">
+              <button type="button" id="pd-add-color" class="rounded-lg border border-glow/40 px-3 py-1.5 text-sm text-glow hover:bg-glow/10">+ Color</button>
+              <button type="button" id="pd-add-dark" class="rounded-lg border border-line px-3 py-1.5 text-sm text-mist hover:text-white">Oscuro</button>
+            </div>
+          </div>
+          <div class="min-w-0 flex-1 space-y-3">
+            {% for group in pattern_groups %}
+            <div>
+              <p class="text-xs uppercase tracking-[0.14em] text-mist">{{ group.name }}</p>
+              <div class="mt-2 flex flex-wrap gap-2">
+                {% for item in group["items"] %}
+                <button type="button" class="pattern-card" data-pattern="{{ item.id }}">
+                  <span class="pattern-stripe" style="background: {{ item.stripe }}"></span>
+                  <span>{{ item.name }}</span>
+                </button>
+                {% endfor %}
+              </div>
+            </div>
+            {% endfor %}
+            <div class="flex flex-wrap gap-2">
+              {% for fx, label in quick_effects %}
+              <button type="button" class="fx-pill" data-fx="{{ fx }}">{{ label }}</button>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-end gap-4">
+          <label class="inline-flex items-center gap-2 text-sm text-mist">
+            <input type="checkbox" id="color-on" class="accent-glow" checked /> Encendido
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-xs text-mist">Brillo (0–255)</span>
+            <input type="range" id="color-bri-range" min="0" max="255" value="180" class="mb-1 block w-36 accent-ember" />
+            <input type="number" id="color-bri" min="0" max="255" value="180" class="field w-28" />
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-xs text-mist">Reenviar cada (s)</span>
+            <input type="number" id="color-every" min="1" max="3600" value="5" class="field w-28" />
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-xs text-mist">LEDs de la tira</span>
+            <input type="number" id="strip-leds" min="1" max="4096" value="98" class="field w-28" />
+          </label>
+        </div>
+        <div id="segments-list" class="space-y-2"></div>
+        <p id="color-size" class="font-mono text-xs text-mist"></p>
+      </div>
+
       <label class="block sm:col-span-2 lg:col-span-3">
         <span class="mb-1 block text-sm text-mist">Descripción</span>
-        <input name="description" maxlength="255" class="field" placeholder="Opcional" />
+        <input name="description" id="config-description" maxlength="255" class="field" placeholder="Opcional" value="{{ editing.description if editing and editing.description else '' }}" />
       </label>
 
       <div class="flex flex-wrap items-center gap-4 sm:col-span-2 lg:col-span-3">
         <label class="inline-flex items-center gap-2 text-sm text-mist">
-          <input type="checkbox" name="activate" class="accent-glow" /> Activar ahora (status=1)
+          <input type="checkbox" name="activate" class="accent-glow" {% if editing and editing.status == 1 %}checked{% endif %} /> Activar ahora (status=1)
         </label>
         <button type="submit" class="ml-auto rounded-lg bg-ember px-5 py-2.5 font-semibold text-ink hover:brightness-110">
-          Guardar
+          {% if editing %}Guardar cambios{% else %}Guardar{% endif %}
         </button>
       </div>
     </form>
+  </section>
+
+  <section class="rounded-xl border border-line bg-panel overflow-hidden">
+    <div class="border-b border-line px-5 py-4">
+      <h2 class="text-lg font-semibold">Presets</h2>
+      <p class="mt-1 text-sm text-mist">El ID es el número de la TTGO. Al armar una secuencia se elige por nombre y se guarda ese ID.</p>
+    </div>
+    <div class="max-h-80 overflow-auto">
+      <table class="min-w-full text-left text-sm">
+        <thead class="sticky top-0 bg-ink/95 text-mist">
+          <tr>
+            <th class="px-4 py-3 font-medium">ID</th>
+            <th class="px-4 py-3 font-medium">Nombre</th>
+            <th class="px-4 py-3 font-medium">Tipo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for preset in presets %}
+          <tr class="border-t border-line">
+            <td class="px-4 py-2 font-mono text-xs">{{ preset.id }}</td>
+            <td class="px-4 py-2">{{ preset.name }}</td>
+            <td class="px-4 py-2 text-xs text-mist">{{ "playlist" if preset.kind == "playlist" else "preset" }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="3" class="px-4 py-8 text-center text-mist">Sin presets cargados.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <section class="rounded-xl border border-line bg-panel overflow-hidden">
@@ -117,7 +249,7 @@
               <div class="font-medium">{{ c.name }}</div>
               {% if c.description %}<div class="text-xs text-mist">{{ c.description }}</div>{% endif %}
             </td>
-            <td class="px-4 py-3 font-mono text-xs text-mist">{{ c.config_type }}</td>
+            <td class="px-4 py-3 font-mono text-xs text-mist">{% if c.config_type == 'static' %}color{% else %}{{ c.config_type }}{% endif %}</td>
             <td class="px-4 py-3">
               {% if c.status == 1 %}
               <span class="rounded-full bg-ember/20 px-2 py-0.5 text-xs font-medium text-ember">activa</span>
@@ -126,19 +258,29 @@
               {% endif %}
             </td>
             <td class="px-4 py-3 font-mono text-xs text-mist">
-              {% set steps = c.payload_json.get('steps') if c.payload_json is mapping else none %}
+              {% set payload = c.payload_json if c.payload_json is mapping else {} %}
+              {% set steps = payload.get('steps') %}
               {% if steps %}
-                {% for step in steps %}{{ step.playlist }} ({{ step.seg if step.seg is not none else step.seconds }}s){% if not loop.last %}, {% endif %}{% endfor %}
+                {% for step in steps %}{% set pname = preset_by_id.get(step.playlist) %}{{ pname if pname else step.playlist }} ({{ step.seg if step.seg is not none else step.seconds }}s){% if not loop.last %}, {% endif %}{% endfor %}
                 · loop
+              {% elif payload.get('z') %}
+                color empaquetado · cada {{ payload.get('every', 5) }}s
+              {% elif payload.get('seg') is sequence %}
+                color · bri {{ payload.get('bri', '—') }} · {{ payload.seg|length }} seg · cada {{ payload.get('every', 5) }}s
               {% else %}
-                playlist {{ c.payload_json.get('playlist', '—') }}
+                {{ preset_by_id.get(payload.get('playlist')) or payload.get('playlist', '—') }}
               {% endif %}
             </td>
             <td class="px-4 py-3">
               <div class="flex flex-wrap gap-2">
+                <a href="/dashboard?edit={{ c.id }}" class="rounded border border-line px-2 py-1 text-xs text-white hover:border-glow">Editar</a>
                 {% if c.status != 1 %}
                 <form method="post" action="/dashboard/configurations/{{ c.id }}/activate">
                   <button class="rounded border border-glow/40 px-2 py-1 text-xs text-glow hover:bg-glow/10" type="submit">Activar</button>
+                </form>
+                {% else %}
+                <form method="post" action="/dashboard/configurations/{{ c.id }}/deactivate">
+                  <button class="rounded border border-line px-2 py-1 text-xs text-mist hover:text-white" type="submit">Desactivar</button>
                 </form>
                 {% endif %}
                 <form method="post" action="/dashboard/configurations/{{ c.id }}/delete" onsubmit="return confirm('¿Eliminar?');">
@@ -158,5 +300,9 @@
   </section>
 </main>
 
+<script id="edit-data" type="application/json">{{ edit_boot|tojson }}</script>
+<script id="effect-names" type="application/json">{{ effects|tojson }}</script>
+<script id="pattern-catalog" type="application/json">{{ pattern_catalog|tojson }}</script>
+<script id="preset-catalog" type="application/json">{{ presets|tojson }}</script>
 <script src="/static/js/dashboard.js"></script>
 {% endblock %}

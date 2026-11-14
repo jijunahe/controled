@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time as time_type
 from typing import Optional
 
 from sqlalchemy import (
@@ -13,6 +13,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Table,
+    Time,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -183,3 +184,91 @@ class AudioSession(Base):
     )
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     frames_sent: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class LedSchedule(Base):
+    __tablename__ = "led_schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
+    intervals: Mapped[list["LedScheduleInterval"]] = relationship(
+        back_populates="schedule",
+        cascade="all, delete-orphan",
+        order_by="LedScheduleInterval.id",
+        lazy="selectin",
+    )
+
+
+class LedScheduleInterval(Base):
+    __tablename__ = "led_schedule_intervals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    schedule_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("led_schedules.id", ondelete="CASCADE"), nullable=False
+    )
+    configuration_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("led_configurations.id", ondelete="CASCADE"), nullable=False
+    )
+    start_time: Mapped[time_type] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time_type] = mapped_column(Time, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+    schedule: Mapped[LedSchedule] = relationship(back_populates="intervals")
+    configuration: Mapped[LedConfiguration] = relationship()
+    days: Mapped[list["LedScheduleIntervalDay"]] = relationship(
+        back_populates="interval",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class LedScheduleIntervalDay(Base):
+    __tablename__ = "led_schedule_interval_days"
+
+    interval_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("led_schedule_intervals.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    weekday: Mapped[int] = mapped_column(Integer, primary_key=True)
+    interval: Mapped[LedScheduleInterval] = relationship(back_populates="days")
+
+
+class LedPreset(Base):
+    __tablename__ = "led_presets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class LedHeartbeat(Base):
+    __tablename__ = "led_heartbeats"
+
+    mac: Mapped[str] = mapped_column(String(12), primary_key=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    rssi: Mapped[Optional[int]] = mapped_column(SmallInteger)
+    packets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class LedPowerOverride(Base):
+    __tablename__ = "led_power_override"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )

@@ -1,17 +1,77 @@
 from pathlib import Path
 import json
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.catalog import PATTERN_CATALOG, QUICK_EFFECTS, catalog_groups
+from app.models import LedConfiguration, LedPreset, User, WledDevice
+from app.presets_catalog import PRESET_CATALOG
 from app.database import get_db
 from app.deps import get_optional_user
-from app.models import LedConfiguration, User, WledDevice
+from app.services import heartbeat as heartbeat_service
+from app.services import simulation as simulation_service
+from app.services import schedule as schedule_service
+from app.services.schedule import DAY_LABELS
 from app.security import create_access_token, verify_password
 from app.services import configurations as cfg_service
 from app.services import devices as device_service
+from app.services.lora_air import color_for_editor
+
+
+def _preset_view(db: Session) -> list[dict]:
+    catalog = [{"id": pid, "name": name, "kind": kind} for pid, name, kind in PRESET_CATALOG]
+    try:
+        rows = db.query(LedPreset).order_by(LedPreset.id.asc()).all()
+        if not rows:
+            for item in catalog:
+                db.add(LedPreset(id=item["id"], name=item["name"], kind=item["kind"]))
+            db.commit()
+            rows = db.query(LedPreset).order_by(LedPreset.id.asc()).all()
+        return [{"id": row.id, "name": row.name, "kind": row.kind} for row in rows]
+    except SQLAlchemyError:
+        db.rollback()
+        return catalog
+
+
+def _schedule_view(db: Session) -> dict:
+    try:
+        paused = schedule_service.is_paused(db)
+        schedule = schedule_service.load_schedule(db)
+        return {
+            "paused": paused,
+            "schedule": schedule,
+            "enabled": bool(schedule and schedule.enabled),
+            "rows": schedule_service.interval_rows(schedule),
+            "note": schedule_service.describe_now(paused, schedule),
+            "error": None,
+        }
+    except SQLAlchemyError:
+        db.rollback()
+        return {
+            "paused": False,
+            "schedule": None,
+            "enabled": False,
+            "rows": [],
+            "note": "",
+            "error": "Falta crear las tablas del horario en la base de datos.",
+        }
+
+
+def _operator(user: User | None) -> User | RedirectResponse:
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    if auth.role == "viewer":
+        return RedirectResponse(
+            url="/dashboard?err=Sin+permisos",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return auth
 
 
 def _require_user(user: User | None) -> User | RedirectResponse:
@@ -242,6 +302,27 @@ def dashboard(
     )
     devices = db.query(WledDevice).order_by(WledDevice.id.asc()).all()
     actives = [c for c in configs if c.status == 1]
+    editing = None
+    edit_boot = None
+    edit_raw = request.query_params.get("edit")
+    if edit_raw and edit_raw.isdigit():
+        editing = db.get(LedConfiguration, int(edit_raw))
+        if editing is not None:
+            source = editing.payload_json if isinstance(editing.payload_json, dict) else {}
+            if editing.config_type == "static":
+                try:
+                    source = color_for_editor(source)
+                except (ValueError, TypeError):
+                    source = {}
+            edit_boot = {
+                "id": editing.id,
+                "name": editing.name,
+                "description": editing.description or "",
+                "type": "color" if editing.config_type == "static" else "playlist",
+                "payload": source,
+            }
+    schedule_view = _schedule_view(db)
+    presets = _preset_view(db)
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -251,32 +332,37 @@ def dashboard(
             "devices": devices,
             "actives": actives,
             "effects": WLED_EFFECTS,
+            "editing": editing,
+            "edit_boot": edit_boot,
             "message": request.query_params.get("msg"),
             "error": request.query_params.get("err"),
+            "pattern_groups": catalog_groups(),
+            "pattern_catalog": PATTERN_CATALOG,
+            "quick_effects": QUICK_EFFECTS,
+            "day_labels": DAY_LABELS,
+            "schedule": schedule_view["schedule"],
+            "schedule_rows": schedule_view["rows"],
+            "schedule_enabled": schedule_view["enabled"],
+            "paused": schedule_view["paused"],
+            "schedule_note": schedule_view["note"],
+            "schedule_error": schedule_view["error"],
+            "schedule_choices": (
+                db.query(LedConfiguration).order_by(LedConfiguration.name.asc()).all()
+            ),
+            "presets": presets,
+            "preset_by_id": {item["id"]: item["name"] for item in presets},
         },
     )
 
 
 @router.get("/devices", response_class=HTMLResponse)
 def devices_page(
-    request: Request,
-    db: Session = Depends(get_db),
     user: User | None = Depends(get_optional_user),
 ):
     auth = _require_user(user)
     if isinstance(auth, RedirectResponse):
         return auth
-    devices = db.query(WledDevice).order_by(WledDevice.id.asc()).all()
-    return templates.TemplateResponse(
-        "devices.html",
-        {
-            "request": request,
-            "user": auth,
-            "devices": devices,
-            "message": request.query_params.get("msg"),
-            "error": request.query_params.get("err"),
-        },
-    )
+    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/devices")
@@ -382,8 +468,8 @@ def delete_device_form(
     )
 
 
-@router.get("/music", response_class=HTMLResponse)
-def music_page(
+@router.get("/schedule", response_class=HTMLResponse)
+def schedule_page(
     request: Request,
     db: Session = Depends(get_db),
     user: User | None = Depends(get_optional_user),
@@ -391,21 +477,125 @@ def music_page(
     auth = _require_user(user)
     if isinstance(auth, RedirectResponse):
         return auth
-    devices = db.query(WledDevice).order_by(WledDevice.id.asc()).all()
+    schedule_view = _schedule_view(db)
+    editing = None
+    edit_raw = request.query_params.get("edit")
+    if edit_raw and edit_raw.isdigit():
+        edit_id = int(edit_raw)
+        editing = next((row for row in schedule_view["rows"] if row["id"] == edit_id), None)
     return templates.TemplateResponse(
-        "music.html",
+        "schedule.html",
         {
             "request": request,
             "user": auth,
-            "devices": devices,
+            "day_labels": DAY_LABELS,
+            "schedule": schedule_view["schedule"],
+            "schedule_rows": schedule_view["rows"],
+            "schedule_enabled": schedule_view["enabled"],
+            "schedule_note": schedule_view["note"],
+            "schedule_error": schedule_view["error"],
+            "schedule_choices": (
+                db.query(LedConfiguration).order_by(LedConfiguration.name.asc()).all()
+            ),
+            "editing": editing,
+            "message": request.query_params.get("msg"),
+            "error": request.query_params.get("err"),
         },
     )
+
+
+@router.get("/simulacion", response_class=HTMLResponse)
+def simulation_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    return templates.TemplateResponse(
+        "simulacion.html",
+        {
+            "request": request,
+            "user": auth,
+            "scene": simulation_service.current_scene(db),
+        },
+    )
+
+
+@router.get("/simulacion/datos")
+def simulation_data(
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    return JSONResponse(simulation_service.current_scene(db))
+
+
+@router.get("/vida", response_class=HTMLResponse)
+def vida_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    beats: list[dict] = []
+    heartbeat_error = None
+    try:
+        beats = heartbeat_service.list_beats(db)
+    except SQLAlchemyError:
+        db.rollback()
+        heartbeat_error = "Falta crear la tabla del bit de vida en la base de datos."
+    return templates.TemplateResponse(
+        "vida.html",
+        {
+            "request": request,
+            "user": auth,
+            "beats": beats,
+            "heartbeat_error": heartbeat_error,
+        },
+    )
+
+
+@router.get("/music", response_class=HTMLResponse)
+def music_page(
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _form_error(message: str, edit_id: int | None = None, *, next_path: str = "/dashboard") -> RedirectResponse:
+    target = next_path + "?err=" + quote(message[:180])
+    if edit_id is not None:
+        target += f"&edit={edit_id}"
+    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _payload_from_form(effect_type: str, sequence_json: str, color_json: str) -> tuple[str, dict]:
+    if effect_type == "color":
+        parsed = json.loads(color_json) if color_json.strip() else {}
+        if not isinstance(parsed, dict):
+            raise ValueError("el efecto de color no es válido")
+        return "static", parsed
+    parsed = json.loads(sequence_json) if sequence_json.strip() else {}
+    if not isinstance(parsed, dict):
+        raise ValueError("la secuencia no es válida")
+    return "playlist", parsed
 
 
 @router.post("/dashboard/configurations")
 def create_from_form(
     name: str = Form(...),
+    effect_type: str = Form("playlist"),
     sequence_json: str = Form(""),
+    color_json: str = Form(""),
     description: str = Form(""),
     activate: str | None = Form(None),
     db: Session = Depends(get_db),
@@ -421,27 +611,61 @@ def create_from_form(
         )
 
     try:
-        parsed = json.loads(sequence_json) if sequence_json.strip() else {}
-        if not isinstance(parsed, dict):
-            raise ValueError("la secuencia no es válida")
-        payload = cfg_service.require_playlist_sequence(parsed)
+        config_type, payload = _payload_from_form(effect_type, sequence_json, color_json)
         cfg_service.create_configuration(
             db,
             name=name.strip(),
-            config_type="playlist",
+            config_type=config_type,
             payload_json=payload,
             user=auth,
             description=description.strip() or None,
             activate=activate is not None,
         )
     except (ValueError, json.JSONDecodeError) as exc:
-        return RedirectResponse(
-            url=f"/dashboard?err={str(exc).replace(' ', '+')[:120]}",
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
+        return _form_error(str(exc))
 
     return RedirectResponse(
         url="/dashboard?msg=Configuraci%C3%B3n+creada",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/dashboard/configurations/{config_id}/update")
+def update_from_form(
+    config_id: int,
+    name: str = Form(...),
+    effect_type: str = Form("playlist"),
+    sequence_json: str = Form(""),
+    color_json: str = Form(""),
+    description: str = Form(""),
+    activate: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    if auth.role == "viewer":
+        return _form_error("Sin permisos", config_id)
+    config = db.get(LedConfiguration, config_id)
+    if not config:
+        return _form_error("No encontrada")
+    try:
+        config_type, payload = _payload_from_form(effect_type, sequence_json, color_json)
+        cfg_service.update_configuration(
+            db,
+            config,
+            user=auth,
+            name=name.strip(),
+            config_type=config_type,
+            payload_json=payload,
+            description=description.strip() or None,
+            activate=True if activate is not None else None,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        return _form_error(str(exc), config_id)
+    return RedirectResponse(
+        url="/dashboard?msg=Configuraci%C3%B3n+actualizada",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -474,6 +698,33 @@ def activate_from_form(
     )
 
 
+@router.post("/dashboard/configurations/{config_id}/deactivate")
+def deactivate_from_form(
+    config_id: int,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _require_user(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    if auth.role == "viewer":
+        return RedirectResponse(
+            url="/dashboard?err=Sin+permisos",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    config = db.get(LedConfiguration, config_id)
+    if not config:
+        return RedirectResponse(
+            url="/dashboard?err=No+encontrada",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    cfg_service.update_configuration(db, config, user=auth, activate=False)
+    return RedirectResponse(
+        url="/dashboard?msg=Configuraci%C3%B3n+desactivada",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 @router.post("/dashboard/configurations/{config_id}/delete")
 def delete_from_form(
     config_id: int,
@@ -493,5 +744,191 @@ def delete_from_form(
         cfg_service.delete_configuration(db, config, auth)
     return RedirectResponse(
         url="/dashboard?msg=Eliminada",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/dashboard/power/off")
+def power_off(
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _operator(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    try:
+        schedule_service.set_paused(db, True)
+    except SQLAlchemyError:
+        db.rollback()
+        return _form_error("No se pudo guardar el apagado")
+    return RedirectResponse(
+        url="/dashboard?msg=Luces+apagadas.+El+horario+queda+en+pausa",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/dashboard/power/on")
+def power_on(
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _operator(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    try:
+        schedule_service.set_paused(db, False)
+    except SQLAlchemyError:
+        db.rollback()
+        return _form_error("No se pudo encender")
+    return RedirectResponse(
+        url="/dashboard?msg=Horario+reanudado",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/dashboard/schedule/enabled")
+def schedule_enabled(
+    enabled: str = Form("0"),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _operator(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    try:
+        schedule_service.set_enabled(db, enabled == "1")
+    except SQLAlchemyError:
+        db.rollback()
+        return _form_error("No se pudo cambiar el horario", next_path="/schedule")
+    text = "Horario+activado" if enabled == "1" else "Horario+en+modo+manual"
+    return RedirectResponse(
+        url=f"/schedule?msg={text}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/dashboard/schedule/intervals")
+def schedule_add_interval(
+    start_time: str = Form(...),
+    end_time: str = Form(...),
+    configuration_id: int = Form(...),
+    day_0: str | None = Form(None),
+    day_1: str | None = Form(None),
+    day_2: str | None = Form(None),
+    day_3: str | None = Form(None),
+    day_4: str | None = Form(None),
+    day_5: str | None = Form(None),
+    day_6: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _operator(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    days = [
+        index
+        for index, flag in enumerate((day_0, day_1, day_2, day_3, day_4, day_5, day_6))
+        if flag
+    ]
+    try:
+        schedule_service.add_interval(
+            db,
+            days=days,
+            start=schedule_service.parse_clock(start_time),
+            end=schedule_service.parse_clock(end_time),
+            configuration_id=configuration_id,
+        )
+    except (ValueError, SQLAlchemyError) as exc:
+        db.rollback()
+        message = str(exc) if isinstance(exc, ValueError) else "No se pudo guardar el intervalo"
+        return _form_error(message, next_path="/schedule")
+    return RedirectResponse(
+        url="/schedule?msg=Horario+agregado",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/dashboard/schedule/intervals/{interval_id}")
+def schedule_update_interval(
+    interval_id: int,
+    start_time: str = Form(...),
+    end_time: str = Form(...),
+    configuration_id: int = Form(...),
+    day_0: str | None = Form(None),
+    day_1: str | None = Form(None),
+    day_2: str | None = Form(None),
+    day_3: str | None = Form(None),
+    day_4: str | None = Form(None),
+    day_5: str | None = Form(None),
+    day_6: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _operator(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    days = [
+        index
+        for index, flag in enumerate((day_0, day_1, day_2, day_3, day_4, day_5, day_6))
+        if flag
+    ]
+    try:
+        schedule_service.update_interval(
+            db,
+            interval_id,
+            days=days,
+            start=schedule_service.parse_clock(start_time),
+            end=schedule_service.parse_clock(end_time),
+            configuration_id=configuration_id,
+        )
+    except (ValueError, SQLAlchemyError) as exc:
+        db.rollback()
+        message = str(exc) if isinstance(exc, ValueError) else "No se pudo guardar el horario"
+        return _form_error(message, edit_id=interval_id, next_path="/schedule")
+    return RedirectResponse(
+        url="/schedule?msg=Horario+actualizado",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/dashboard/schedule/intervals/{interval_id}/enabled")
+def schedule_interval_enabled(
+    interval_id: int,
+    enabled: str = Form("0"),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _operator(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    try:
+        schedule_service.set_interval_enabled(db, interval_id, enabled == "1")
+    except (ValueError, SQLAlchemyError) as exc:
+        db.rollback()
+        message = str(exc) if isinstance(exc, ValueError) else "No se pudo cambiar el horario"
+        return _form_error(message, next_path="/schedule")
+    text = "Horario+activado" if enabled == "1" else "Horario+desactivado"
+    return RedirectResponse(
+        url=f"/schedule?msg={text}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/dashboard/schedule/intervals/{interval_id}/delete")
+def schedule_delete_interval(
+    interval_id: int,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    auth = _operator(user)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    try:
+        schedule_service.delete_interval(db, interval_id)
+    except SQLAlchemyError:
+        db.rollback()
+        return _form_error("No se pudo eliminar el horario", next_path="/schedule")
+    return RedirectResponse(
+        url="/schedule?msg=Horario+eliminado",
         status_code=status.HTTP_303_SEE_OTHER,
     )

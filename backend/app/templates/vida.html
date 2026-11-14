@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Nodos — Control LEDs{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="10" />{% endblock %}
+{% block body %}
+<header class="relative z-10 border-b border-line bg-panel/80 backdrop-blur">
+  <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
+    <div>
+      <p class="font-mono text-[11px] uppercase tracking-[0.18em] text-glow">LoRa · Colombia</p>
+      <h1 class="text-xl font-semibold text-white sm:text-2xl">Nodos</h1>
+    </div>
+    <div class="flex items-center gap-3 text-sm">
+      <a href="/dashboard" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Panel</a>
+      <a href="/schedule" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Horario</a>
+      <a href="/simulacion" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Simulación</a>
+      <span class="hidden text-mist sm:inline">{{ user.username }} · {{ user.role }}</span>
+      <form method="post" action="/logout">
+        <button class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-ember hover:text-ember" type="submit">Salir</button>
+      </form>
+    </div>
+  </div>
+</header>
+
+<main class="relative z-10 mx-auto max-w-6xl space-y-8 px-4 py-8">
+  <section class="rounded-xl border border-line bg-panel p-5 sm:p-6">
+    <h2 class="text-lg font-semibold text-white">Receptoras</h2>
+    <p class="mt-1 text-sm text-mist">Cada TTGO contesta por LoRa con su MAC. En línea si el aviso llegó en los últimos 45 segundos. La hora es la de Colombia.</p>
+    {% if heartbeat_error %}
+    <p class="mt-4 text-sm text-red-200">{{ heartbeat_error }}</p>
+    {% elif beats %}
+    <div class="mt-5 space-y-2">
+      {% for row in beats %}
+      <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-ink/40 px-3 py-3">
+        <p class="font-mono text-sm text-white">{{ row.mac }}</p>
+        <div class="flex flex-wrap items-center gap-3 text-sm">
+          {% if row.rssi is not none %}
+          <span class="text-mist">{{ row.rssi }} dBm</span>
+          {% endif %}
+          <span class="text-mist">{{ row.seen }}</span>
+          {% if row.alive %}
+          <span class="rounded-full bg-glow/15 px-2 py-0.5 text-xs text-glow">En línea</span>
+          {% else %}
+          <span class="rounded-full bg-red-500/15 px-2 py-0.5 text-xs text-red-200">Sin señal</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="mt-4 text-sm text-mist">Todavía no llega ningún aviso.</p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

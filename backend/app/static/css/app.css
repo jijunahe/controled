@@ -22,3 +22,116 @@
 .field:focus {
   box-shadow: 0 0 0 2px rgba(240, 162, 2, 0.45);
 }
+
+.pd-studio {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.75rem;
+  border-radius: 0.9rem;
+  background: #10161d;
+  border: 1px solid #2a3542;
+}
+
+.pd-wheel-wrap {
+  display: flex;
+  width: 7.5rem;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.pd-wheel {
+  width: 5.5rem;
+  height: 5.5rem;
+  padding: 0;
+  border: 3px solid #3dd6c6;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pd-wheel::-webkit-color-swatch-wrapper { padding: 0; }
+.pd-wheel::-webkit-color-swatch { border: none; border-radius: 999px; }
+.pd-wheel::-moz-color-swatch { border: none; border-radius: 999px; }
+
+.pattern-card {
+  display: flex;
+  min-width: 8.5rem;
+  flex-direction: column;
+  gap: 0.35rem;
+  border: 1px solid #2a3542;
+  border-radius: 0.7rem;
+  background: #0f1419;
+  padding: 0.4rem;
+  color: #f8fafc;
+  text-align: left;
+  font-size: 0.8rem;
+}
+
+.pattern-card:hover { border-color: #f0a202; }
+
+.pattern-stripe {
+  display: block;
+  height: 0.7rem;
+  border-radius: 999px;
+}
+
+.fx-pill {
+  border: 1px solid #2a3542;
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  color: #9aa8b5;
+  font-size: 0.78rem;
+}
+
+.fx-pill:hover { color: #f8fafc; border-color: #3dd6c6; }
+
+.day-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #2a3542;
+  border-radius: 999px;
+  padding: 0.3rem 0.65rem;
+  color: #f8fafc;
+  font-size: 0.8rem;
+}
+
+.power-off,
+.power-on {
+  border-radius: 0.7rem;
+  padding: 0.7rem 1.1rem;
+  font-weight: 700;
+}
+
+.power-off {
+  background: #c2410c;
+  color: #fff7ed;
+}
+
+.power-on {
+  background: #0f766e;
+  color: #ecfeff;
+}
+
+.power-off:disabled,
+.power-on:disabled {
+  opacity: 0.35;
+}
+
+.strip-well {
+  width: 7.5rem;
+  height: calc(100vh - 6.25rem);
+  border-radius: 999px;
+  border: 1px solid #2a3542;
+  background: #070b10;
+  padding: 0.85rem 0;
+  box-shadow: inset 0 0 28px rgba(0, 0, 0, 0.55);
+}
+
+.strip-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

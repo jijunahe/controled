@@ -3,6 +3,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.models import LedConfiguration, LedConfigurationLog, User, WledDevice
+from app.services.lora_air import fit_color_packet
 
 
 def _add_log(
@@ -61,6 +62,16 @@ def require_playlist_sequence(payload: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"paso {index}: seg debe ser un entero entre 1 y 3600")
         steps.append({"playlist": playlist, "seg": seconds})
     return {"loop": True, "steps": steps}
+
+
+def normalize_payload(config_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if config_type in ("playlist", "sequence"):
+        return require_playlist_sequence(payload)
+    if config_type == "static":
+        return fit_color_packet(payload)
+    if not isinstance(payload, dict):
+        raise ValueError("payload_json debe ser un objeto")
+    return payload
 
 
 def resolve_target_device_ids(
@@ -165,7 +176,7 @@ def create_configuration(
     ids = list(device_ids or [])
     if device_id is not None and device_id not in ids:
         ids.append(device_id)
-    payload_json = require_playlist_sequence(payload_json)
+    payload_json = normalize_payload(config_type, payload_json)
 
     config = LedConfiguration(
         name=name,
@@ -230,7 +241,7 @@ def update_configuration(
     if config_type is not None:
         config.config_type = config_type
     if payload_json is not None:
-        config.payload_json = require_playlist_sequence(payload_json)
+        config.payload_json = normalize_payload(config.config_type, payload_json)
     if description is not None:
         config.description = description
 
