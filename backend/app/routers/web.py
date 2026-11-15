@@ -300,8 +300,11 @@ def dashboard(
     configs = (
         db.query(LedConfiguration).order_by(LedConfiguration.id.desc()).limit(50).all()
     )
-    devices = db.query(WledDevice).order_by(WledDevice.id.asc()).all()
-    actives = [c for c in configs if c.status == 1]
+    nodes_online = 0
+    try:
+        nodes_online = sum(1 for beat in heartbeat_service.list_beats(db) if beat["alive"])
+    except SQLAlchemyError:
+        db.rollback()
     editing = None
     edit_boot = None
     edit_raw = request.query_params.get("edit")
@@ -322,6 +325,12 @@ def dashboard(
                 "payload": source,
             }
     schedule_view = _schedule_view(db)
+    if schedule_view["error"]:
+        playing = {"on": False, "name": "—", "via": "Sin horario"}
+    else:
+        playing = schedule_service.playing_now(
+            db, schedule_view["paused"], schedule_view["schedule"]
+        )
     presets = _preset_view(db)
     return templates.TemplateResponse(
         "dashboard.html",
@@ -329,8 +338,8 @@ def dashboard(
             "request": request,
             "user": auth,
             "configs": configs,
-            "devices": devices,
-            "actives": actives,
+            "nodes_online": nodes_online,
+            "playing": playing,
             "effects": WLED_EFFECTS,
             "editing": editing,
             "edit_boot": edit_boot,

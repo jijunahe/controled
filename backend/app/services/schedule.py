@@ -233,6 +233,34 @@ def interval_rows(schedule: LedSchedule | None) -> list[dict]:
     return rows
 
 
+def playing_now(db: Session, paused: bool, schedule: LedSchedule | None) -> dict:
+    """Lo que mandan las luces ahora: el horario en curso o el efecto activo."""
+    if paused:
+        return {"on": False, "name": "Apagado", "via": "Pausa manual"}
+    active = [item for item in schedule.intervals if item.enabled] if schedule and schedule.enabled else []
+    if active:
+        now = clock_now()
+        for interval in sorted(active, key=lambda item: item.id):
+            days = {int(day.weekday) for day in interval.days}
+            if interval_covers(as_time(interval.start_time), as_time(interval.end_time), now, days):
+                config = interval.configuration
+                return {
+                    "on": True,
+                    "name": config.name if config is not None else "Configuración",
+                    "via": "Horario",
+                }
+        return {"on": False, "name": "Apagado", "via": "Fuera de horario"}
+    config = (
+        db.query(LedConfiguration)
+        .filter(LedConfiguration.status == 1)
+        .order_by(LedConfiguration.updated_at.desc())
+        .first()
+    )
+    if config is None:
+        return {"on": False, "name": "Ninguno", "via": "Sin efecto activo"}
+    return {"on": True, "name": config.name, "via": "Efecto activo"}
+
+
 def describe_now(paused: bool, schedule: LedSchedule | None) -> str:
     now = clock_now()
     clock = now.strftime("%H:%M")

@@ -31,21 +31,22 @@
 
   <section class="grid gap-4 sm:grid-cols-3">
     <article class="rounded-xl border border-line bg-panel p-4">
-      <p class="text-xs uppercase tracking-wide text-mist">Activas (status=1)</p>
-      <p class="mt-2 text-2xl font-semibold {% if actives %}text-ember{% else %}text-mist{% endif %}">
-        {{ actives|length }}
+      <p class="text-xs uppercase tracking-wide text-mist">Activo</p>
+      <p class="mt-2 text-lg font-semibold leading-snug break-words {% if playing.on %}text-ember{% else %}text-mist{% endif %}">
+        {{ playing.name }}
       </p>
-      {% for a in actives %}
-      <p class="mt-1 text-xs text-mist">#{{ a.id }} · {{ a.name }}</p>
-      {% endfor %}
+      <p class="mt-1 text-xs text-mist">{{ playing.via }}</p>
     </article>
     <article class="rounded-xl border border-line bg-panel p-4">
       <p class="text-xs uppercase tracking-wide text-mist">Configuraciones</p>
       <p class="mt-2 text-2xl font-semibold">{{ configs|length }}</p>
     </article>
     <article class="rounded-xl border border-line bg-panel p-4">
-      <p class="text-xs uppercase tracking-wide text-mist">Dispositivos</p>
-      <p class="mt-2 text-2xl font-semibold">{{ devices|length }}</p>
+      <p class="text-xs uppercase tracking-wide text-mist">Nodos</p>
+      <p class="mt-2 text-2xl font-semibold {% if nodes_online %}text-glow{% else %}text-mist{% endif %}">
+        {{ nodes_online }}
+      </p>
+      <p class="mt-1 text-xs text-mist">TTGO en línea</p>
     </article>
   </section>
 
@@ -192,37 +193,6 @@
         </button>
       </div>
     </form>
-  </section>
-
-  <section class="rounded-xl border border-line bg-panel overflow-hidden">
-    <div class="border-b border-line px-5 py-4">
-      <h2 class="text-lg font-semibold">Presets</h2>
-      <p class="mt-1 text-sm text-mist">El ID es el número de la TTGO. Al armar una secuencia se elige por nombre y se guarda ese ID.</p>
-    </div>
-    <div class="max-h-80 overflow-auto">
-      <table class="min-w-full text-left text-sm">
-        <thead class="sticky top-0 bg-ink/95 text-mist">
-          <tr>
-            <th class="px-4 py-3 font-medium">ID</th>
-            <th class="px-4 py-3 font-medium">Nombre</th>
-            <th class="px-4 py-3 font-medium">Tipo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for preset in presets %}
-          <tr class="border-t border-line">
-            <td class="px-4 py-2 font-mono text-xs">{{ preset.id }}</td>
-            <td class="px-4 py-2">{{ preset.name }}</td>
-            <td class="px-4 py-2 text-xs text-mist">{{ "playlist" if preset.kind == "playlist" else "preset" }}</td>
-          </tr>
-          {% else %}
-          <tr>
-            <td colspan="3" class="px-4 py-8 text-center text-mist">Sin presets cargados.</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
   </section>
 
   <section class="rounded-xl border border-line bg-panel overflow-hidden">
