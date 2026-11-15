@@ -42,11 +42,10 @@
       <p class="mt-2 text-2xl font-semibold">{{ configs|length }}</p>
     </article>
     <article class="rounded-xl border border-line bg-panel p-4">
-      <p class="text-xs uppercase tracking-wide text-mist">Nodos</p>
+      <p class="text-xs uppercase tracking-wide text-mist">Dispositivos en línea</p>
       <p class="mt-2 text-2xl font-semibold {% if nodes_online %}text-glow{% else %}text-mist{% endif %}">
         {{ nodes_online }}
       </p>
-      <p class="mt-1 text-xs text-mist">TTGO en línea</p>
     </article>
   </section>
 
@@ -207,7 +206,7 @@
             <th class="px-4 py-3 font-medium">Nombre</th>
             <th class="px-4 py-3 font-medium">Tipo</th>
             <th class="px-4 py-3 font-medium">Status</th>
-            <th class="px-4 py-3 font-medium">Detalle</th>
+            <th class="hidden px-4 py-3 font-medium md:table-cell">Detalle</th>
             <th class="px-4 py-3 font-medium">Acciones</th>
           </tr>
         </thead>
@@ -227,7 +226,7 @@
               <span class="rounded-full bg-line px-2 py-0.5 text-xs text-mist">0</span>
               {% endif %}
             </td>
-            <td class="px-4 py-3 font-mono text-xs text-mist">
+            <td class="hidden px-4 py-3 font-mono text-xs text-mist md:table-cell">
               {% set payload = c.payload_json if c.payload_json is mapping else {} %}
               {% set steps = payload.get('steps') %}
               {% if steps %}

@@ -2,12 +2,12 @@
 {% block title %}Simulación — Control LEDs{% endblock %}
 {% block body %}
 <header class="relative z-10 border-b border-line bg-panel/80 backdrop-blur">
-  <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
+  <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-3 px-4 py-3">
     <div>
       <p class="font-mono text-[11px] uppercase tracking-[0.18em] text-glow">Tira vertical</p>
       <h1 class="text-xl font-semibold text-white sm:text-2xl">Simulación</h1>
     </div>
-    <div class="flex items-center gap-3 text-sm">
+    <nav class="flex flex-wrap items-center gap-2 text-sm">
       <a href="/dashboard" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Panel</a>
       <a href="/schedule" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Horario</a>
       <a href="/vida" class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-glow hover:text-glow">Nodos</a>
@@ -15,22 +15,22 @@
       <form method="post" action="/logout">
         <button class="rounded-lg border border-line px-3 py-1.5 text-mist hover:border-ember hover:text-ember" type="submit">Salir</button>
       </form>
-    </div>
+    </nav>
   </div>
 </header>
 
-<main class="relative z-10 mx-auto flex max-w-6xl flex-col items-center gap-6 px-4 pt-4 pb-2 lg:flex-row lg:items-start lg:justify-center lg:gap-16">
-  <section class="w-full max-w-md lg:pt-6">
-    <p id="scene-source" class="font-mono text-[11px] uppercase tracking-[0.18em] text-glow">{{ scene.source }}</p>
-    <h2 id="scene-name" class="mt-2 text-2xl font-semibold text-white">{{ scene.name }}</h2>
-    <p id="scene-detail" class="mt-2 text-sm text-mist">{{ scene.detail }}</p>
-    <p id="scene-step" class="mt-4 text-lg text-white"></p>
-    <p id="scene-clock" class="mt-2 font-mono text-xs text-mist">{% if scene.clock %}Hora Colombia {{ scene.clock }}{% endif %}</p>
-    <p class="mt-6 text-sm text-mist">La columna sigue el efecto que están recibiendo las luces. Arriba está el primer LED. Si hay horario en esta hora, se simula ese; si no, la configuración activa.</p>
-  </section>
+<main class="sim-layout">
   <div class="strip-well">
     <canvas id="strip" class="strip-canvas" aria-label="Simulación vertical del efecto"></canvas>
   </div>
+  <section class="sim-copy">
+    <p id="scene-source" class="font-mono text-[11px] uppercase tracking-[0.18em] text-glow">{{ scene.source }}</p>
+    <h2 id="scene-name" class="mt-2 text-2xl font-semibold text-white">{{ scene.name }}</h2>
+    <p id="scene-detail" class="mt-2 text-sm text-mist">{{ scene.detail }}</p>
+    <p id="scene-step" class="mt-3 text-lg text-white"></p>
+    <p id="scene-clock" class="mt-2 font-mono text-xs text-mist">{% if scene.clock %}Hora Colombia {{ scene.clock }}{% endif %}</p>
+    <p class="sim-help">La columna sigue el efecto que están recibiendo las luces. Arriba está el primer LED. Si hay horario en esta hora, se simula ese; si no, la configuración activa.</p>
+  </section>
 </main>
 <script id="scene-data" type="application/json">{{ scene|tojson }}</script>
 <script src="/static/js/simulacion.js"></script>
